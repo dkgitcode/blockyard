@@ -28,9 +28,11 @@ export function gunHeroPose(scene: HeroScene, id: string, _hero: HeroId): GunHer
     pose.left = { at: [0.1, -0.06, 0.6], w: 1, open: true };
     pose.lean = 0.06;
   }
+  // Flying on the jetpack: leaning into it a little.
+  if (scene.on(id, 'jetpack')) pose.lean += 0.12;
   const dbg = scene.debug?.act;
   const act = dbg ? { k: dbg[0], at: scene.now - dbg[1], t: dbg[1] + 1 } : scene.act(id);
-  if (!act) return pose.left ? pose : null;
+  if (!act) return pose.left || pose.lean ? pose : null;
   const t = scene.now - act.at;
   switch (act.k) {
     case 'charge': {

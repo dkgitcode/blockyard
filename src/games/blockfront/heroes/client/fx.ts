@@ -390,11 +390,13 @@ export function heroFx(scene: HeroScene): ClientKit {
         // The jetpack: twin jets of fire from his back, driving down.
         if ((until.get('jetpack') ?? 0) > now) {
           const right = new V3(-face.fwd.z, 0, face.fwd.x);
+          const mine = id === client.me.id;
           for (const side of [-1, 1]) {
             const nozzle = { x: who.x - face.fwd.x * 0.28 + right.x * 0.13 * side, y: who.y - 0.05, z: who.z - face.fwd.z * 0.28 + right.z * 0.13 * side };
             fx.particles(nozzle, [1, 0.8, 0.35], { count: 1, speed: 0.8, size: 0.1, gravity: 26, glow: 3, life: 0.14, collide: false });
             fx.particles({ x: nozzle.x, y: nozzle.y - 0.2, z: nozzle.z }, [1, 0.4, 0.08], { count: 1, speed: 1.2, size: 0.13, gravity: 22, glow: 2.2, life: 0.2, collide: false });
-            if (tick % 3 === 0) fx.particles({ x: nozzle.x, y: nozzle.y - 0.6, z: nozzle.z }, [0.55, 0.52, 0.5], { count: 1, speed: 0.8, size: 0.2, gravity: 2, life: 0.8, spread: 0.1, collide: false });
+            // Smoke under him (thinner under your own: it'd cloud your view).
+            if (tick % (mine ? 6 : 3) === 0) fx.particles({ x: nozzle.x, y: nozzle.y - 0.6, z: nozzle.z }, [0.55, 0.52, 0.5], { count: 1, speed: 0.8, size: mine ? 0.12 : 0.2, gravity: 2, life: mine ? 0.5 : 0.8, spread: 0.1, collide: false });
             fx.flare(nozzle, 0.3);
           }
           if (now >= (jetSound.get(id) ?? 0)) {

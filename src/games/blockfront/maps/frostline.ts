@@ -10,8 +10,8 @@ import * as ships from './ships';
  * drawn from the other).
  *
  * - **A, the base's hangar** (west, the Rebels' for good): a great cavern cut into the glacier's
- *   cliff, a transport and two snowspeeders parked in it; its blast-door mouth opens east, and a
- *   tunnel each side comes out further along the cliff.
+ *   cliff, a transport, an X-winged fighter and a snowspeeder parked in it; its blast-door mouth
+ *   opens east, and a tunnel each side comes out further along the cliff.
  * - **B, the shield generator** (the Rebels' at the start): a big dish on its pylon, walls of
  *   packed snow round the post, and in front of it the trench line: a zigzag of plank-lined
  *   trenches the length of the field, gun emplacements behind them, ramps out and planks across.
@@ -401,11 +401,11 @@ function hangar() {
       set(fx, y, z, y === FLOOR + 10 && z % 3 === 0 ? 'rebel_light' : post && y === FLOOR ? 'hazard' : 'base_panel');
     }
   }
-  // The transport along the north wall, nose to the mouth; two speeders in the south half.
+  // The transport along the north wall, nose to the mouth; a fighter and a speeder in the south half.
   ships.transport(at(-93, -9, 2), FLOOR);
-  ships.snowspeeder(at(-99, 8, 2), FLOOR);
-  ships.snowspeeder(at(-89, 11, 2), FLOOR);
-  props.crates(L, -106, FLOOR, 12, 2, 3, 2, 60);
+  ships.xfighter(at(-104, 8, 2), FLOOR, 'orange_concrete');
+  ships.snowspeeder(at(-87, 12, 2), FLOOR);
+  props.crates(L, -107, FLOOR, 14, 2, 2, 2, 60);
   props.drums(L, -83, FLOOR, 13, 4, 61);
   props.crates(L, -104, FLOOR, -2, 2, 2, 1, 62);
   props.crates(L, -84, FLOOR, -14, 3, 2, 2, 63);
@@ -577,6 +577,19 @@ function postC() {
   snowWall(14, 6, 5, 'z');
   snowWall(-6, 20, 5, 'x');
   props.commandPost(L, 2, FLOOR, 10, 'pad_blue', 2);
+  // The approaches: low walls of packed snow and cargo, staggered, between the trench and the
+  // cannon and between the cannon and the ridge.
+  snowWall(-23, 6, 4, 'z');
+  snowWall(-17, -10, 4, 'z');
+  snowWall(-12, 15, 5, 'x');
+  snowWall(-25, -3, 3, 'x');
+  snowWall(19, 2, 4, 'z');
+  snowWall(22, -5, 4, 'x');
+  snowWall(16, 18, 4, 'x');
+  props.crates(L, -19, FLOOR, 12, 2, 2, 2, 82);
+  props.crates(L, 10, FLOOR, -3, 2, 2, 2, 83);
+  props.drums(L, -14, FLOOR, 1, 3, 84);
+  ships.snowspeeder(at(22, 10, 1), FLOOR, true);
 }
 
 // ---------------------------------------------------------------------------------------------

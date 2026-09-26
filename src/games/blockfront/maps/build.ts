@@ -1,4 +1,4 @@
-import type { BlockRef, Vec3 } from '@platform';
+import type { Blueprint, BlockRef, Vec3 } from '@platform';
 
 export { hash } from './kit';
 
@@ -78,6 +78,31 @@ export class Place implements Canvas {
   get(x: number, y: number, z: number) {
     const [wx, wz] = this.at(x, z);
     return this.c.get(wx, y, wz);
+  }
+}
+
+/**
+ * One canvas over several Blueprints: each cell goes to the first whose box holds it (the others
+ * never see it). A map spread wide (its floor out to the view distance, mountains round it) keeps
+ * each box tight round what's in it instead of one huge mostly empty box.
+ */
+export class Patchwork implements Canvas {
+  constructor(readonly parts: Blueprint[]) {}
+
+  private part(x: number, y: number, z: number): Blueprint | undefined {
+    for (const b of this.parts) {
+      const o = b.origin;
+      if (x >= o.x && y >= o.y && z >= o.z && x < o.x + b.size.x && y < o.y + b.size.y && z < o.z + b.size.z) return b;
+    }
+    return undefined;
+  }
+
+  set(x: number, y: number, z: number, block: BlockRef) {
+    this.part(Math.floor(x), Math.floor(y), Math.floor(z))?.set(x, y, z, block);
+  }
+
+  get(x: number, y: number, z: number) {
+    return this.part(Math.floor(x), Math.floor(y), Math.floor(z))?.get(x, y, z);
   }
 }
 

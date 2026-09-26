@@ -39,9 +39,9 @@ export const shared = defineShared({
     spawnYaw: MAPS[0].home.yaw,
     time: WORLD.time,
     freezeTime: true,
-    // Walls and roofs chip and scorch under blaster fire (each blaster's `carve`); the ground and
-    // the canyon's walls round the town stay whole.
-    destructible: { above: WORLD.floorY - 1, except: ['canyon_rock', 'canyon_rock_pale'] },
+    // Walls and roofs chip and scorch under blaster fire (each blaster's `carve`); the ground, and
+    // the canyon's and the glacier's walls round the maps, stay whole.
+    destructible: { above: WORLD.floorY - 1, except: ['canyon_rock', 'canyon_rock_pale', 'glacier', 'frost_rock'] },
   },
   player: {
     health: 100,

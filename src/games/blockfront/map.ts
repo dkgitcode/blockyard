@@ -1,3 +1,4 @@
+import { FROSTLINE } from './maps/frostline';
 import { SPACEPORT } from './maps/spaceport';
 import type { MapSpec } from './maps/kit';
 
@@ -8,7 +9,7 @@ export type { MapSpec, PostSpec, SpawnPoint } from './maps/kit';
  * loaded and drawn: `maxViewDistance`). The first is the home page's, and the one a new room
  * starts on.
  */
-export const MAPS: readonly MapSpec[] = [SPACEPORT];
+export const MAPS: readonly MapSpec[] = [SPACEPORT, FROSTLINE];
 
 export const mapById = (id: string): MapSpec | undefined => MAPS.find((m) => m.id === id);
 

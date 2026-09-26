@@ -28,6 +28,11 @@ export type Sink = (call: PresentCall) => void;
 class MenuProxy implements MenuHandle {
   open = true;
   cbs: number[] = [];
+  /**
+   * The entries' callbacks before the last update, kept for one more: a click on the menu as its
+   * screen showed it a moment ago (the update still on its way, another's vote say) still counts.
+   */
+  private was: number[] = [];
 
   constructor(
     readonly id: number,
@@ -40,8 +45,12 @@ class MenuProxy implements MenuHandle {
   update(o: Partial<MenuOptions>) {
     if (!this.open) return;
     this.opts = { ...this.opts, ...o };
-    this.hub.release(this.cbs);
-    this.cbs = [];
+    // New entries, new callbacks (the ones before last go); a new title or subtitle alone keeps them.
+    if (o.sections) {
+      this.hub.release(this.was);
+      this.was = this.cbs;
+      this.cbs = [];
+    }
     this.hub.send(this.to, 'hud', 'menuUpdate', [this.id, this.hub.encodeMenu(o, this.cbs, this.to)]);
   }
 
@@ -56,6 +65,7 @@ class MenuProxy implements MenuHandle {
     if (!this.open) return;
     this.open = false;
     this.hub.release(this.cbs);
+    this.hub.release(this.was);
     this.hub.menus.delete(this.id);
     this.opts.onClose?.();
   }

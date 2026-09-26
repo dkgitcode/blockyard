@@ -92,6 +92,8 @@ export class EntityView {
   private shown = new Map<number, Shown>();
   private shots = new Map<number, Shot>();
   private time = 0;
+  /** A player's figure to fade (ours, a third-person camera close behind it), and how far (1: not at all). */
+  near: { player: string | null; opacity: number } = { player: null, opacity: 1 };
   /** This frame's figures, in the frame's order, and its host time. */
   private drawn: Shown[] = [];
   private list: ShownFigure[] = [];
@@ -286,6 +288,8 @@ export class EntityView {
       a.dying = 0;
       (u.uOpacity as { value: number }).value = 1;
     }
+    // Our own figure, with the camera up close behind it: faded, so it doesn't fill the view.
+    if (alive && v.figure.player !== null && v.figure.player === this.near.player) (u.uOpacity as { value: number }).value = this.near.opacity;
     if ((f.held ?? null) !== v.held) this.hold(v, f.held ?? null);
     if (v.heldMesh) {
       // Lit like the body.

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { GameHost } from '../../src/platform/host/game';
-import { IDLE_INPUT, type HostEvent, type PresentCall } from '../../src/platform/net/protocol';
+import { IDLE_INPUT, type HostEvent, type PlayerInput, type PresentCall } from '../../src/platform/net/protocol';
 import { padHints } from '../../src/platform/player/gamepad';
 import { match } from '../../src/games/callofblocky/match';
 import { ROTATION } from '../../src/games/callofblocky/modes';
@@ -20,8 +20,9 @@ const planned = (i: number) => `${ROTATION[i].mode} ${ROTATION[i].map}`;
  * vote, and neither they nor anyone watching from the home page count toward the majority; one
  * vote of two people doesn't skip, and V again takes it back; two of two skip, and the
  * rotation's next is on, with nothing kept of the match skipped; the votes start again from
- * nothing in the next, where two of three skip it; and someone leaving takes their vote with
- * them, or leaves the votes still in a majority.
+ * nothing in the next, where two of three skip it (one of them dead: a dead player still votes,
+ * though V typed in the chat doesn't); and someone leaving takes their vote with them, or leaves
+ * the votes still in a majority.
  */
 export default function cobskip() {
   // The bots pick with Math.random too: seeded, a failure plays out the same way again.
@@ -74,6 +75,13 @@ export default function cobskip() {
     host.command(id, { t: 'input', input: { ...IDLE_INPUT, active: true, pressed: ['KeyV'], down: ['KeyV'] } });
     tick();
     host.command(id, { t: 'input', input: { ...IDLE_INPUT, active: true } });
+    tick();
+  };
+  /** They press V with their controls as they are: dead (their screen's still the game's), or typing in chat (it isn't). */
+  const pressAs = (id: string, as: Partial<PlayerInput>) => {
+    host.command(id, { t: 'input', input: { ...IDLE_INPUT, ...as, pressed: ['KeyV'], down: ['KeyV'] } });
+    tick();
+    host.command(id, { t: 'input', input: { ...IDLE_INPUT, ...as } });
     tick();
   };
   let n = 1;
@@ -171,11 +179,18 @@ export default function cobskip() {
   check(lastVote(bob) === 'Ann voted to skip Team Deathmatch on Big Kahuna Burger (1/2)', `a new match, a new count, three people: ${lastVote(bob)}`);
   step(1);
   check(now() === planned(1) && phase() === 'playing', `one of three doesn't skip it (${now()})`);
-  press(cat);
-  check(votes(bob).at(-2) === 'Cat voted to skip Team Deathmatch on Big Kahuna Burger (2/2)' && phase() === 'over', `two of three skip it: ${votes(bob).slice(-2).join(' | ')}`);
+  // Cat's down, watching her kill cam: V still votes. (A V typed into the chat doesn't: her screen hasn't the controls.)
+  const C = g.players.find((p) => p.name === 'Cat')!;
+  C.protect(0);
+  C.damage(1000, { source: 'world' });
+  step(0.2);
+  pressAs(cat, { active: false });
+  check(!C.alive && lastVote(bob).startsWith('Ann voted') && phase() === 'playing', `V typed in the chat isn't a vote: ${lastVote(bob)}`);
+  pressAs(cat, { active: false, dead: true });
+  check(votes(bob).at(-2) === 'Cat voted to skip Team Deathmatch on Big Kahuna Burger (2/2)' && phase() === 'over', `two of three skip it, one of them dead: ${votes(bob).slice(-2).join(' | ')}`);
   stepUntil(() => phase() === 'playing', 8);
   check(now() === planned(2), `the rotation's next again (${now()})`);
-  console.log(`  three people: 1/2 no skip, 2/2 skipped; → ${now()}`);
+  console.log(`  three people: 1/2 no skip, 2/2 skipped (the second vote from the dead); → ${now()}`);
 
   // Cat votes and leaves: her vote goes with her.
   opened();

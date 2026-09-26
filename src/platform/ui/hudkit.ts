@@ -669,11 +669,13 @@ export class GameHud implements Omit<HudApi, 'marker' | 'radar' | 'scoreboard' |
     const closeBtn = h('button.menu-close', { title: 'Close (Esc)' }, '×');
     const card = h('div.menu-card', {}, h('div.menu-head', {}, h('div', {}, title, sub), closeBtn), body);
     const el = h('div.screen.menu-screen', {}, card);
-    const entry = (e: MenuEntry) => {
+    // (Each entry keeps its place as `data-pad-key`: redrawn, a controller's highlight stays on it.)
+    const entry = (e: MenuEntry, key: string) => {
       const icon = e.icon ? this.icon('img.menu-icon', e.icon) : h('span.menu-icon');
       const b = h(
         `button.menu-entry${e.disabled ? '.disabled' : ''}${e.active ? '.active' : ''}`,
         {
+          'data-pad-key': key,
           onclick: () => {
             if (!e.disabled) e.onSelect?.();
           },
@@ -684,13 +686,16 @@ export class GameHud implements Omit<HudApi, 'marker' | 'radar' | 'scoreboard' |
       );
       return b;
     };
-    const render = () => {
+    const head = () => {
       title.textContent = current.title;
       sub.textContent = current.subtitle ?? '';
       sub.style.display = current.subtitle ? '' : 'none';
+    };
+    const render = () => {
+      head();
       body.replaceChildren(
-        ...current.sections.map((sec) =>
-          h('div.menu-section', {}, sec.title ? h('div.menu-section-title', {}, sec.title) : null, h('div.menu-grid', {}, ...sec.entries.map(entry))),
+        ...current.sections.map((sec, si) =>
+          h('div.menu-section', {}, sec.title ? h('div.menu-section-title', {}, sec.title) : null, h('div.menu-grid', {}, ...sec.entries.map((e, ei) => entry(e, `${si}:${ei}`)))),
         ),
       );
     };
@@ -728,7 +733,8 @@ export class GameHud implements Omit<HudApi, 'marker' | 'radar' | 'scoreboard' |
     return {
       update: (o) => {
         current = { ...current, ...o };
-        if (open) render();
+        // (A new title or subtitle alone, a countdown say, leaves the entries as they are.)
+        if (open) (o.sections ? render : head)();
       },
       close,
       get open() {

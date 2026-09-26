@@ -22,9 +22,23 @@ const STEP_LAG = 1;
 
 const smoothstep = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 const clampPitch = (p: number) => Math.max(-Math.PI / 2 + 0.001, Math.min(Math.PI / 2 - 0.001, p));
-/** Over the shoulder, the aim converges on the first thing under the crosshair this far out, and never nearer than this past the eyes. */
+/**
+ * Over the shoulder, the aim converges on the first thing under the crosshair within `AIM_FAR`:
+ * someone from their eyes on, and a block only from `AIM_BLOCKS` past their eyes (cover, a wall or
+ * the ground right in front of them is what their own shot meets anyway: aiming at it from the
+ * camera's side would swing the shot wide).
+ */
 const AIM_FAR = 200;
-const AIM_NEAR = 2;
+const AIM_BLOCKS = 2.5;
+/**
+ * A third-person camera's arm: how quickly it pulls in when something comes between it and the
+ * player (fast: it mustn't show the inside of a wall for long) and lets out again once it's clear
+ * (slower, so a doorway or a corner doesn't jerk it), per second; and how far apart its probes run
+ * (blocks: something thinner, a post or a pole, doesn't pull it in).
+ */
+const ARM_IN = 9;
+const ARM_OUT = 2.5;
+const ARM_SPREAD = 0.28;
 
 /**
  * The first-person camera: mouse look (the client owns it, so it feels immediate; the view goes
@@ -65,44 +79,60 @@ export class PlayerCamera {
   tilt: readonly [number, number, number] | null = null;
   private tiltNow: [number, number, number] = [0, 0, 0];
   /**
-   * The camera's own turn, as the mouse turns it. `yaw` and `pitch` are the player's aim (what goes
-   * to the simulation: where they look and shoot): the same, except over the shoulder (an orbit's
-   * `shoulder`), where the aim is turned from their eyes to what's under the middle of the screen
-   * (`aimOff`, worked out each frame in `follow`).
+   * Where the player looks (radians; yaw 0 looks toward -z), as the mouse turns it: the camera's
+   * turn, and what goes to the simulation (where they walk and face). What they shoot along is
+   * `aim()`: the same, except over the shoulder.
    */
-  private camYaw = 0;
-  private camPitch = 0;
-  private aimOff = { yaw: 0, pitch: 0 };
+  yaw = 0;
+  pitch = 0;
   /** The orbit's camera beside the point it circles, across and up the view (blocks), and whether the wheel zooms it. */
   private shoulder: [number, number] | null = null;
   private wheel = true;
+  /** How far out the arm is (0..1 of the way), pulled in by what's in the way. */
+  private arm = 1;
+  /** Last frame's third-person rig: the eyes, the point circled and the camera's place from it in the view's own space. */
+  private rig: { eye: THREE.Vector3; pivot: THREE.Vector3; local: THREE.Vector3 } | null = null;
+  private aimed: { yaw: number; pitch: number; at: number; out: { yaw: number; pitch: number } } | null = null;
+  private frames = 0;
   /**
-   * How far along a ray the first thing is that the aim should meet (a block, someone else's body),
-   * or null for nothing within `max`: over the shoulder, the aim converges on it.
+   * How far along a ray the first thing is that the aim should meet (someone else's body as it's
+   * drawn, or a block `blocksFrom` or more along), or null for nothing within `max`: over the
+   * shoulder, the aim converges on it.
    */
-  aimAt: (from: THREE.Vector3, dir: THREE.Vector3, max: number) => number | null = () => null;
+  aimAt: (from: THREE.Vector3, dir: THREE.Vector3, max: number, blocksFrom: number) => number | null = () => null;
 
   constructor(readonly camera: THREE.PerspectiveCamera) {}
-
-  /** Where the player aims (radians; yaw 0 looks toward -z): the camera's turn, converged over the shoulder. */
-  get yaw(): number {
-    return this.camYaw + this.aimOff.yaw;
-  }
-  set yaw(v: number) {
-    this.camYaw = v - this.aimOff.yaw;
-  }
-  get pitch(): number {
-    return this.camPitch + this.aimOff.pitch;
-  }
-  set pitch(v: number) {
-    this.camPitch = clampPitch(v - this.aimOff.pitch);
-  }
 
   look(input: Input, active: boolean) {
     if (!active) return;
     const k = 0.0022 * this.sensitivity;
-    this.camYaw -= input.mouseDX * k;
-    this.camPitch = clampPitch(this.camPitch - input.mouseDY * k);
+    this.yaw -= input.mouseDX * k;
+    this.pitch = clampPitch(this.pitch - input.mouseDY * k);
+  }
+
+  /**
+   * Where a shot or a throw goes now (radians): where they look, except over the shoulder (an
+   * orbit's `shoulder`), where the middle of the screen isn't along their eyes' line: then from
+   * their eyes to what the middle of the screen shows (the first block or body along the camera's
+   * line, at least a couple of blocks past their eyes), so what they hit is what the crosshair is
+   * on. Worked out when it's asked, from the look as it is then.
+   */
+  aim(): { yaw: number; pitch: number } {
+    const r = this.rig;
+    if (!r || !this.shoulder || this.distance <= 0.5) return { yaw: this.yaw, pitch: this.pitch };
+    const c = this.aimed;
+    if (c && c.yaw === this.yaw && c.pitch === this.pitch && c.at === this.frames) return c.out;
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
+    const from = r.local.clone().applyQuaternion(q).add(r.pivot);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    // Along the camera's line from level with their eyes: what's between the camera and them doesn't count.
+    const ahead = Math.max(0, new THREE.Vector3().subVectors(r.eye, from).dot(fwd));
+    from.addScaledVector(fwd, ahead);
+    const hit = this.aimAt(from, fwd, AIM_FAR, AIM_BLOCKS) ?? AIM_FAR;
+    const dir = from.addScaledVector(fwd, Math.max(hit, 0.5)).sub(r.eye).normalize();
+    const out = { yaw: Math.atan2(-dir.x, -dir.z), pitch: clampPitch(Math.asin(Math.max(-1, Math.min(1, dir.y)))) };
+    this.aimed = { yaw: this.yaw, pitch: this.pitch, at: this.frames, out };
+    return out;
   }
 
   /** The game's orbit, as the newest frame has it: a new one starts from its distance. */
@@ -151,10 +181,10 @@ export class PlayerCamera {
     // Newer only: frames can come out of order (a server's, played back smoothly).
     if (f.view.seq > this.viewSeq) {
       this.viewSeq = f.view.seq;
-      this.camYaw = f.view.yaw;
-      this.camPitch = f.view.pitch;
-      this.aimOff.yaw = this.aimOff.pitch = 0;
+      this.yaw = f.view.yaw;
+      this.pitch = f.view.pitch;
     }
+    this.frames++;
     const targetEye = f.sliding ? SLIDE_EYE : f.sneaking && !f.flying ? SNEAK_EYE : EYE;
     this.eye += (targetEye - this.eye) * (1 - Math.exp(-dt * (f.sliding ? 18 : 14)));
     this.stepUp(dt, f);
@@ -170,9 +200,9 @@ export class PlayerCamera {
     const ease = 1 - Math.exp(-dt * 30);
     const t = this.tiltNow;
     for (let i = 0; i < 3; i++) t[i] += ((want?.[i] ?? 0) - t[i]) * ease;
-    const kicked = clampPitch(this.camPitch + t[1]);
-    this.camera.position.set(f.x + Math.cos(this.camYaw) * bobX, f.y + this.eye + this.stepLag + bobY - t[2], f.z - Math.sin(this.camYaw) * bobX);
-    this.euler.set(kicked, this.camYaw, Math.cos(phase) * 0.004 * bobAmt - t[0]);
+    const kicked = clampPitch(this.pitch + t[1]);
+    this.camera.position.set(f.x + Math.cos(this.yaw) * bobX, f.y + this.eye + this.stepLag + bobY - t[2], f.z - Math.sin(this.yaw) * bobX);
+    this.euler.set(kicked, this.yaw, Math.cos(phase) * 0.004 * bobAmt - t[0]);
     this.camera.quaternion.setFromEuler(this.euler);
 
     // Third person: back from the eyes, round the point the game's orbit circles (reached over the
@@ -180,26 +210,28 @@ export class PlayerCamera {
     this.distance += (this.zoomTo - this.distance) * (1 - Math.exp(-dt * 8));
     if (Math.abs(this.zoomTo - this.distance) < 0.01) this.distance = this.zoomTo;
     if (circle) this.circled.copy(circle);
-    this.aimOff.yaw = this.aimOff.pitch = 0;
+    this.rig = null;
     if (this.distance > 0) {
       const eye = new THREE.Vector3(f.x, f.y + this.eye + this.stepLag, f.z);
       const pivot = eye.clone().lerp(this.circled, smoothstep(this.distance / 6));
       const q = this.camera.quaternion;
-      const back = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
-      const pos = this.camera.position.copy(pivot).addScaledVector(back, Math.min(this.distance, this.clearance(pivot, back, this.distance)));
-      // Over the shoulder: across and up from there (eased in over the first blocks of zoom), short of a wall.
-      if (this.shoulder) {
-        const k = smoothstep(this.distance / 3);
-        const side = new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(this.shoulder[0] * k);
-        side.addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(q), this.shoulder[1] * k);
-        const len = side.length();
-        if (len > 1e-4) {
-          side.divideScalar(len);
-          pos.addScaledVector(side, Math.min(len, this.clearance(pos, side, len)));
-        }
-        this.converge(eye, k);
-      }
-    }
+      // The arm: back from the point circled, and over the shoulder (eased in over the first
+      // blocks of zoom), in the view's own space.
+      const k = this.shoulder ? smoothstep(this.distance / 3) : 0;
+      const local = new THREE.Vector3(this.shoulder ? this.shoulder[0] * k : 0, this.shoulder ? this.shoulder[1] * k : 0, this.distance);
+      const len = local.length();
+      const dir = local.clone().applyQuaternion(q).divideScalar(len);
+      // What's in the way, probed by five rays a little apart (the middle answer: a wall stops them
+      // all, a post or a pole only one or two), and the arm pulled in fast, let out slowly.
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(ARM_SPREAD);
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q).multiplyScalar(ARM_SPREAD);
+      const probes = [new THREE.Vector3(), right, right.clone().negate(), up, up.clone().negate()].map((o) => this.clearance(o.add(pivot), dir, len));
+      probes.sort((a, b) => a - b);
+      const free = Math.max(0, Math.min(1, probes[2] / len));
+      this.arm += (free - this.arm) * (1 - Math.exp(-dt * (free < this.arm ? ARM_IN : ARM_OUT)));
+      this.camera.position.copy(pivot).addScaledVector(dir, len * this.arm);
+      this.rig = { eye, pivot, local: local.multiplyScalar(this.arm) };
+    } else this.arm = 1;
 
     const aiming = this.aimZoom > 1.01;
     const targetFov = (this.baseFov + (f.sprinting && !aiming ? 9 : 0) + (f.sliding ? 6 : 0) + (f.flying && speed > 12 ? 6 : 0)) / this.aimZoom;
@@ -210,27 +242,6 @@ export class PlayerCamera {
       this.camera.updateProjectionMatrix();
     }
     this.camera.updateMatrixWorld();
-  }
-
-  /**
-   * Over the shoulder, the middle of the screen isn't along their eyes' line: aim their eyes at what
-   * the middle of the screen shows (the first block or body along the camera's line, at least a
-   * couple of blocks past their eyes), so what they shoot is what the crosshair is on. `k` eases it
-   * in with the shoulder.
-   */
-  private converge(eye: THREE.Vector3, k: number) {
-    const from = this.camera.position;
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-    const ahead = new THREE.Vector3().subVectors(eye, from).dot(fwd);
-    const hit = this.aimAt(from, fwd, AIM_FAR) ?? AIM_FAR;
-    const at = from.clone().addScaledVector(fwd, Math.max(hit, ahead + AIM_NEAR));
-    const dir = at.sub(eye).normalize();
-    const yaw = Math.atan2(-dir.x, -dir.z);
-    const pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
-    let dy = yaw - this.camYaw;
-    dy -= Math.round(dy / (Math.PI * 2)) * Math.PI * 2;
-    this.aimOff.yaw = dy * k;
-    this.aimOff.pitch = (clampPitch(pitch) - this.camPitch) * k;
   }
 
   /** Start from where another camera on the same view has settled (its eye height and field of view): a replay's eyes take over without a jump. */

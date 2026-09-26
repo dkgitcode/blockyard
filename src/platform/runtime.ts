@@ -103,6 +103,9 @@ const deviceDpr = () => Math.min(window.devicePixelRatio || 1, 2);
  * other players' figures and name tags, `Debris` for rubble, `DevTools` for the F3 overlay and
  * `__game.dev`, besides the views of entities, pickups, props and vehicles).
  */
+/** How far a third-person camera keeps off what it meets (blocks). */
+const CAMERA_MARGIN = 0.3;
+
 export class Runtime {
   mode: Mode = 'title';
   private settings: Settings;
@@ -496,7 +499,7 @@ export class Runtime {
 
     this.view = new PlayerCamera(this.camera);
     this.view.clearance = (from, dir, max) => this.clearance(from, dir, max);
-    this.view.aimAt = (from, dir, max) => this.aimAt(from, dir, max);
+    this.view.aimAt = (from, dir, max, blocksFrom) => this.aimAt(from, dir, max, blocksFrom);
     this.avatars = new Avatars({
       def,
       content: this.content,
@@ -1354,7 +1357,10 @@ export class Runtime {
     const playing = this.mode === 'playing';
     const started = this.frameData?.started ?? false;
     const dead = this.mine(this.frameData)?.dead ?? false;
-    const active = playing && (this.input.locked || this.debugActive) && !dead && !this.gameHud.screenOpen;
+    // The game has the controls (playing, the mouse captured, no screen open): all of them while
+    // they're alive; while they're dead, only what asks for a dead player's keys hears them.
+    const inGame = playing && (this.input.locked || this.debugActive) && !this.gameHud.screenOpen;
+    const active = inGame && !dead;
     this.sfx.hold(started && (this.mode === 'paused' || this.mode === 'console'));
 
     // Mouse look is the client's; the controls and the view go to the host.
@@ -1385,6 +1391,7 @@ export class Runtime {
     // they lasted: walking and vehicles move at once here (prediction), and the server moves them
     // input by input, the same way.
     const input = this.withShots(this.input.snapshot(active, this.view.yaw, this.view.pitch, this.view.viewSeq));
+    if (inGame && dead) input.dead = true;
     const seq = ++this.inputSeq;
     this.inputTimes.set(seq, now / 1000);
     this.inputTimes.delete(seq - 600);
@@ -1440,6 +1447,9 @@ export class Runtime {
       // A movement ability's camera: as prediction has it, else the newest frame's.
       this.view.tilt = this.mode === 'title' || me.dead ? null : this.predictor ? this.predictor.tilt : (me.tilt ?? null);
       this.view.follow(dt, me, this.orbitPoint(f, me));
+      // Our own figure faded as a third-person camera comes up close behind it (a wall at our back).
+      const head = Math.hypot(this.camera.position.x - me.x, this.camera.position.y - (me.y + 1.5), this.camera.position.z - me.z);
+      this.entityView.near = { player: this.view.thirdPerson ? this.playerId : null, opacity: Math.max(0.25, Math.min(1, (head - 0.8) / 0.8)) };
       if (this.mode === 'title') {
         this.camera.position.y += 22;
         this.camera.updateMatrixWorld();
@@ -1569,12 +1579,17 @@ export class Runtime {
    * What an over-the-shoulder aim converges on (`PlayerCamera.aimAt`): how far along the camera's
    * line the first solid block or someone else's body is (as the newest frame has them), or null.
    */
-  private aimAt(from: THREE.Vector3, dir: THREE.Vector3, max: number): number | null {
-    const h = this.flightWorld?.hit(from.x, from.y, from.z, dir.x, dir.y, dir.z, max);
-    let best = h ? h.t : max;
+  private aimAt(from: THREE.Vector3, dir: THREE.Vector3, max: number, blocksFrom: number): number | null {
+    const b = blocksFrom;
+    const h = this.flightWorld?.hit(from.x + dir.x * b, from.y + dir.y * b, from.z + dir.z * b, dir.x, dir.y, dir.z, max - b);
+    let best = h ? h.t + b : max;
+    const at = new THREE.Vector3();
     for (const p of this.frameData?.players ?? []) {
       if (p.id === this.playerId || p.dead) continue;
-      const t = rayBox(from, dir, { x: p.x - 0.4, y: p.y, z: p.z - 0.4 }, { x: p.x + 0.4, y: p.y + (p.sneaking ? 1.6 : 1.9), z: p.z + 0.4 });
+      // Where their figure is drawn (what the crosshair is on), else where the frame has them.
+      const id = this.avatars.idOf(p.id);
+      if (id === undefined || !this.entityView.locate(id, undefined, at)) at.set(p.x, p.y, p.z);
+      const t = rayBox(from, dir, { x: at.x - 0.4, y: at.y, z: at.z - 0.4 }, { x: at.x + 0.4, y: at.y + (p.sneaking ? 1.6 : 1.9), z: at.z + 0.4 });
       if (t !== null && t < best) best = t;
     }
     return best < max ? best : null;
@@ -1582,12 +1597,10 @@ export class Runtime {
 
   /** How far a third-person camera can go from a point along a direction before a block (solid props don't stop it). */
   private clearance(from: THREE.Vector3, dir: THREE.Vector3, max: number): number {
-    const w = this.chunks.world;
-    for (let t = 0.25; t <= max + 0.35; t += 0.25) {
-      const id = w.get_block(Math.floor(from.x + dir.x * t), Math.floor(from.y + dir.y * t), Math.floor(from.z + dir.z * t));
-      if (id !== 255 && this.registry.blocks[id]?.solid) return Math.max(0, t - 0.6);
-    }
-    return max;
+    // Blocks as they really are (a post, a slab, a fence where its bars are), and the camera kept a
+    // little way off what it meets.
+    const h = this.flightWorld?.hit(from.x, from.y, from.z, dir.x, dir.y, dir.z, max + CAMERA_MARGIN);
+    return h ? Math.max(0, h.t - CAMERA_MARGIN) : max;
   }
 
   /** The game's client code starts: its kits' `setup`, then its own (the items' looks, its voices). */
@@ -1689,11 +1702,12 @@ export class Runtime {
       {
         active,
         dead,
+        // What a shot or a throw goes along: where they look, or over the shoulder, at what the crosshair's on.
         get yaw() {
-          return view.yaw;
+          return view.aim().yaw;
         },
         get pitch() {
-          return view.pitch;
+          return view.aim().pitch;
         },
         isDown: (code) => active && input.isDown(code) && !keys.has(code),
         pressed: (code) => active && input.keyThisFrame(code) && !keys.has(code),

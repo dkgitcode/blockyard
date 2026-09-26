@@ -63,8 +63,8 @@ export class SimInput implements InputApi {
     return this.state.active && this.down.has(code) && !this.consumedKeys.has(code);
   }
 
-  pressed(code: string): boolean {
-    return this.state.active && this.pressedKeys.has(code) && !this.consumedKeys.has(code);
+  pressed(code: string, opts?: { dead?: boolean }): boolean {
+    return (this.state.active || (opts?.dead === true && this.state.dead === true)) && this.pressedKeys.has(code) && !this.consumedKeys.has(code);
   }
 
   button(b: number): boolean {

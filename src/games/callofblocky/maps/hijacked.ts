@@ -625,7 +625,7 @@ const spot = (x: number, y: number, z: number): Vec3 => ({ x: OX + x + 0.5, y, z
 export const HIJACKED: MapSpec = {
   id: 'hijacked',
   name: 'Hijacked',
-  blurb: 'A superyacht adrift at sundown: her decks, her salon and her hold',
+  blurb: 'A superyacht adrift at sundown, and her hold',
   floorY: FLOOR,
   // The sea first: she's built over it, her hull taking its place.
   structures: [sea(), build()],

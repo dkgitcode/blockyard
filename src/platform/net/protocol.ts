@@ -85,6 +85,11 @@ export const MESSAGE_MAX = { server: 64 * 1024, client: 8 * 1024 };
 export interface PlayerInput {
   /** Controls reach the game (playing, mouse captured, no menu open, alive). */
   active: boolean;
+  /**
+   * They'd reach the game but that the player's dead (`active` is false): the keys pressed reach
+   * what asks for a dead player's keys (`InputApi.pressed(code, { dead: true })`: a vote, a menu).
+   */
+  dead?: boolean;
   /** Keys held and keys that went down this tick (KeyboardEvent.code). */
   down: string[];
   pressed: string[];

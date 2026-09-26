@@ -44,7 +44,7 @@ const REARM = 4;
 /** Seconds of protection spawning at their side's base. */
 const BASE_PROTECT = 3;
 /** The third-person camera: over the right shoulder, a few blocks back. */
-const SHOULDER = { distance: 3.6, shoulder: { right: 0.95, up: 0.42 } };
+const SHOULDER = { distance: 3.3, shoulder: { right: 0.65, up: 0.5 } };
 
 const BOT_NAMES: [string[], string[]] = [
   ['Sgt. Varno', 'Cpl. Jex', 'Lt. Dray', 'Pvt. Kallis', 'Tamsin', 'Oro Brask', 'Hollis', 'Keet', 'Marn Vosk', 'Pell', 'Sgt. Idrin', 'Coyle', 'Zara Venn', 'Pvt. Olan', 'Dex Farro', 'Nima'],
@@ -630,6 +630,7 @@ function personalHud(game: GameContext, f: Fighter) {
 // Choosing the match: a public room goes round the rotation; a room of one's own picks (M)
 // -------------------------------------------------------------------------------------------------
 
+const MAP_ICONS: Record<string, string> = { spaceport: 'sandstone', frostline: 'snow_block' };
 const MODE_ICONS: Record<ModeId, IconRef> = { conquest: { item: 'imp_rifle', view: 'side' }, hvv: { item: 'saber_vader', view: 'side' } };
 
 function matchMenu(game: GameContext, p: Player) {
@@ -641,7 +642,7 @@ function matchMenu(game: GameContext, p: Player) {
   const pick: MatchPlan = { mode: match.mode.id, map: match.map.id };
   const sections = (): MenuOptions['sections'] => [
     { title: 'Mode', entries: Object.values(MODES).map((m) => ({ icon: MODE_ICONS[m.id], label: m.name, note: m.goal, active: pick.mode === m.id, onSelect: () => ((pick.mode = m.id), settings?.update({ sections: sections() })) })) },
-    { title: 'Map', entries: MAPS.map((m) => ({ icon: { block: 'sandstone' }, label: m.name, note: m.blurb, active: pick.map === m.id, onSelect: () => ((pick.map = m.id), settings?.update({ sections: sections() })) })) },
+    { title: 'Map', entries: MAPS.map((m) => ({ icon: { block: MAP_ICONS[m.id] ?? 'sandstone' }, label: m.name, note: m.blurb, active: pick.map === m.id, onSelect: () => ((pick.map = m.id), settings?.update({ sections: sections() })) })) },
     {
       title: 'Go',
       entries: [

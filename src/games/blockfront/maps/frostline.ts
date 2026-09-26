@@ -359,13 +359,26 @@ function peak(x: number, z: number, h: number, face: BlockRef, heightOf: (x: num
 }
 
 function surroundings() {
-  const both = (x: number, z: number) => Math.max(mountain(x, z), glacier(x, z));
-  for (let z = -94; z <= 94; z++)
-    for (let x = -150; x <= 150; x++) {
+  // Every column's height once (the faces below look at their neighbours'): glacier or mountain.
+  const X0 = -151;
+  const Z0 = -95;
+  const W = 303;
+  const D = 191;
+  const tall = new Float32Array(W * D);
+  const isGlacier = new Uint8Array(W * D);
+  for (let z = Z0; z < Z0 + D; z++)
+    for (let x = X0; x < X0 + W; x++) {
       const g = glacier(x, z);
       const m = mountain(x, z);
-      if (g >= m && g > 0) peak(x, z, g, 'glacier', both);
-      else if (m > 0) peak(x, z, m, 'frost_rock', both);
+      const i = x - X0 + (z - Z0) * W;
+      tall[i] = Math.max(g, m);
+      isGlacier[i] = g >= m && g > 0 ? 1 : 0;
+    }
+  const both = (x: number, z: number) => (x < X0 || z < Z0 || x >= X0 + W || z >= Z0 + D ? 0 : tall[x - X0 + (z - Z0) * W]);
+  for (let z = -94; z <= 94; z++)
+    for (let x = -150; x <= 150; x++) {
+      const i = x - X0 + (z - Z0) * W;
+      if (tall[i] > 0) peak(x, z, tall[i], isGlacier[i] ? 'glacier' : 'frost_rock', both);
     }
   // One course of snow over the sand everywhere else anyone could see.
   for (let z = -280; z <= 280; z++) for (let x = -330; x <= 330; x++) if (x < -150 || x > 150 || z < -94 || z > 94) set(x, G, z, 'snow_block');

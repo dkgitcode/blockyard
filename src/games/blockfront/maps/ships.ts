@@ -233,3 +233,128 @@ export function wreck(c: Canvas, y: number, len = 120) {
       put(len, v, k, engine ? 'black_concrete' : 'hull_dark');
     }
 }
+
+/**
+ * The Empire's four-legged walker, standing (nose west): a long armoured body seventeen up on four
+ * jointed legs (knees and broad feet), a ribbed neck and the boxy head out front with its chin
+ * guns. Its middle is at the origin; walk right under it.
+ */
+export function walker(c: Canvas, y: number) {
+  const b = y + 17;
+  // The body: panels with a dark seam round it and dark ribs, the roof narrower, its edges cut.
+  box(c, -10, b, -4, 9, b + 7, 4, (x, yy, z) => {
+    const top = yy === b + 7;
+    if (top && Math.abs(z) === 4) return undefined;
+    if ((x === -10 || x === 9) && (yy === b + 7 || yy === b) && Math.abs(z) === 4) return undefined;
+    if (yy === b || yy === b + 4 || (Math.abs(z) === 4 && (x + 10) % 5 === 0)) return 'durasteel_dark';
+    return top && (x & 1) === 0 ? 'hull' : 'durasteel';
+  });
+  box(c, -9, b + 7, -3, 8, b + 7, 3, (x) => (x % 4 === 0 ? 'durasteel_dark' : slab('hull')));
+  // The legs: broad feet, knees and hips, dark joints on grey.
+  for (const [lx, lz] of [[-8, -4], [-8, 3], [5, -4], [5, 3]] as const) {
+    box(c, lx - 1, y, lz - 1, lx + 2, y, lz + 2, 'durasteel_dark');
+    box(c, lx, y + 1, lz, lx + 1, b - 1, lz + 1, (_x, yy) => (yy === y + 1 ? 'hull_dark' : 'durasteel'));
+    box(c, lx - 1, y + 8, lz - 1, lx + 2, y + 9, lz + 2, (xx, yy, zz) => (yy === y + 9 && (xx === lx - 1 || xx === lx + 2) && (zz === lz - 1 || zz === lz + 2) ? undefined : 'durasteel_dark'));
+    box(c, lx - 1, b - 1, lz - 1, lx + 2, b - 1, lz + 2, 'durasteel_dark');
+  }
+  // The neck, ribbed.
+  box(c, -14, b + 3, -1, -11, b + 5, 1, (x) => (x % 2 === 0 ? 'hull_dark' : 'durasteel_dark'));
+  // The head: boxy, its front narrower, a dark visor, chin guns and cheek guns.
+  box(c, -22, b + 1, -3, -15, b + 6, 3, (x, yy, z) => {
+    const front = x <= -21;
+    if (front && Math.abs(z) === 3) return undefined;
+    if (yy === b + 6 && (Math.abs(z) === 3 || x === -22)) return undefined;
+    if (x === -22 && yy === b + 4) return 'cockpit';
+    return yy === b + 1 || (x + z) % 5 === 0 ? 'durasteel_dark' : 'durasteel';
+  });
+  box(c, -21, b + 6, -2, -16, b + 6, 2, slab('hull'));
+  for (const z of [-2, 2]) box(c, -26, b + 1, z, -23, b + 1, z, 'hull_dark');
+  for (const z of [-4, 4]) box(c, -22, b + 3, z, -20, b + 3, z, 'hull_dark');
+}
+
+/**
+ * One of the walkers, brought down: lying on its side along x (nose west), its roof toward +z
+ * and its underside toward -z, its lower legs out along the snow that way, the upper pair broken
+ * off short, the head torn away (`walkerHead` puts it somewhere). Eight high: a wall of armour.
+ */
+export function walkerWreck(c: Canvas, y: number) {
+  // The body, fallen: nine tall (its width), eight deep (its height), a dent and a hole torn in it.
+  box(c, -10, y, 0, 9, y + 8, 7, (x, yy, z) => {
+    if ((x === -10 || x === 9) && (yy === y + 8 || yy === y) && (z === 0 || z === 7)) return undefined;
+    if (z === 7 && Math.abs(yy - y - 4) === 4) return undefined;
+    if (x >= -2 && x <= 1 && yy >= y + 6 && z >= 4) return undefined;
+    if (z === 0 || z === 4 || (x + 10) % 5 === 0) return 'durasteel_dark';
+    return hash(x, yy, z) < 0.12 ? 'hull_dark' : 'durasteel';
+  });
+  // The legs that were underneath: out along the snow, bent at the knee.
+  for (const lx of [-8, 5]) {
+    box(c, lx, y, -12, lx + 1, y + 1, -1, (_x, _yy, z) => (z === -6 || z === -7 ? 'durasteel_dark' : 'durasteel'));
+    box(c, lx - 1, y, -15, lx + 2, y + 1, -13, 'durasteel_dark');
+    // The upper ones, snapped off.
+    box(c, lx, y + 7, -3, lx + 1, y + 8, -1, 'durasteel');
+    c.set(lx, y + 7, -4, 'hull_dark');
+  }
+  // The neck's stump.
+  box(c, -13, y + 3, 2, -11, y + 5, 4, 'hull_dark');
+}
+
+/** A walker's head, torn off and lying tipped on its side, half in the snow. */
+export function walkerHead(c: Canvas, y: number) {
+  box(c, -4, y - 1, -3, 3, y + 4, 3, (x, yy, z) => (yy === y + 4 && Math.abs(z) === 3 ? undefined : x === -4 && yy === y + 1 ? 'cockpit' : (x + z) % 5 === 0 ? 'durasteel_dark' : 'durasteel'));
+  box(c, -7, y, -2, -5, y, -2, 'hull_dark');
+  box(c, -6, y + 1, 2, -5, y + 1, 2, 'hull_dark');
+}
+
+/**
+ * The Rebels' medium transport, parked on its struts (nose west): a long hull, the cockpit up at
+ * the front, a row of cargo pods along its back, three engines glowing at the stern, a Rebel
+ * orange stripe.
+ */
+export function transport(c: Canvas, y: number) {
+  box(c, -13, y + 2, -3, 12, y + 5, 3, (x, yy, z) => {
+    const nose = x <= -11;
+    if (nose && Math.abs(z) === 3) return undefined;
+    if (x === -13 && (yy === y + 5 || Math.abs(z) >= 2)) return undefined;
+    if (yy === y + 5 && Math.abs(z) === 3) return slab('hull');
+    if (yy === y + 2) return 'hull_dark';
+    if (yy === y + 3 && Math.abs(z) === 3 && x > -10 && x < 10) return 'orange_concrete';
+    return 'hull';
+  });
+  box(c, -11, y + 6, -1, -9, y + 6, 1, (x) => (x === -11 ? 'cockpit' : 'hull'));
+  c.set(-10, y + 7, 0, slab('hull'));
+  for (let x = -6; x <= 8; x += 4) box(c, x, y + 6, -2, x + 2, y + 7, 2, (_x, yy, z) => (yy === y + 7 && Math.abs(z) === 2 ? slab('hull') : 'crate_metal'));
+  for (const z of [-2, 0, 2]) {
+    c.set(13, y + 3, z, 'engine_glow');
+    c.set(13, y + 4, z, 'engine_glow');
+  }
+  for (const [x, z] of [[-9, -2], [-9, 2], [8, -2], [8, 2]] as const) box(c, x, y, z, x, y + 1, z, 'hull_dark');
+}
+
+/**
+ * The Rebels' two-seat snowspeeder (nose west): a flat wedge, white with orange flashes, the
+ * cockpit glass, an engine pod each side at the back, on its skids. `wrecked`: nose buried in
+ * the snow, tail up, a scorched furrow behind it.
+ */
+export function snowspeeder(c: Canvas, y: number, wrecked = false) {
+  const lift = (x: number) => (wrecked ? (x < -2 ? -1 : x < 2 ? 0 : 1) : 1);
+  for (let x = -6; x <= 3; x++) {
+    const half = x < -3 ? 1 : 2;
+    for (let z = -half; z <= half; z++) {
+      const yy = y + lift(x);
+      c.set(x, yy, z, x <= -4 && Math.abs(z) === 1 ? 'orange_concrete' : x === 3 ? 'hull_dark' : 'hull');
+      if (x >= -2 && x <= 1 && Math.abs(z) <= 1) c.set(x, yy + 1, z, x === -2 ? 'cockpit' : slab('hull'));
+    }
+  }
+  for (const s of [-1, 1]) {
+    for (let x = 0; x <= 3; x++) c.set(x, y + lift(x), s * 3, 'hull_dark');
+    c.set(4, y + lift(4), s * 3, wrecked ? 'black_concrete' : 'engine_glow');
+  }
+  if (!wrecked) {
+    c.set(-3, y, 0, 'hull_dark');
+    c.set(2, y, 0, 'hull_dark');
+    return;
+  }
+  // Snow heaped at the nose, the furrow it ploughed behind it.
+  for (let z = -2; z <= 2; z++) c.set(-7, y, z, 'snow_block');
+  for (let x = 5; x <= 14; x++) for (let z = -1; z <= 1; z++) c.set(x, y - 1, z, hash(x, z, 5) < 0.6 ? 'gray_concrete' : 'packed_snow');
+}

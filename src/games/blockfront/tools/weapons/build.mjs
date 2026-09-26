@@ -296,6 +296,45 @@ class Model {
   has(i, j, k) {
     return this.vox.filled(i, j, k);
   }
+  /**
+   * Wear on the edges: the voxels of the colours `from` with two or more faces open (an edge, a
+   * corner), every so many by their cell (`rate` of them), turn `to` (a worn finish's metal showing).
+   */
+  wear(from, to, rate) {
+    const open = (i, j, k) => DIRS.filter(({ n }) => !this.has(i + n[0], j + n[1], k + n[2])).length;
+    const hash = (i, j, k) => (((Math.imul(i + 101, 73856093) ^ Math.imul(j + 211, 19349663) ^ Math.imul(k + 307, 83492791)) >>> 0) % 1000) / 1000;
+    const hit = [...this.vox.parts.get('body')].filter(([key, c]) => from.includes(c) && open(...cellOf(key)) >= 2 && hash(...cellOf(key)) < rate);
+    for (const [key] of hit) this.vox.set('body', ...cellOf(key), to);
+    return this;
+  }
+  /** An arm in the x-z plane (a bow's): the cells within `r` px of a path of (x, z) px points, from y0 to y1 px; `c(i, j, k, t)` gets how far along the path (0..1) each is. */
+  arm(pts, r, [y0, y1], c) {
+    const f = typeof c === 'function' ? c : () => c;
+    const seg = pts.slice(1).map((p, n) => Math.hypot(p[0] - pts[n][0], p[1] - pts[n][1]));
+    const total = seg.reduce((x, y) => x + y, 0);
+    const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[1]);
+    const [i0, i1] = this.span(0, Math.min(...xs) - r, Math.max(...xs) + r + 1e-6), [k0, k1] = this.span(2, Math.min(...zs) - r, Math.max(...zs) + r + 1e-6), [j0, j1] = this.span(1, y0, y1);
+    for (let k = k0; k < k1; k++)
+      for (let i = i0; i < i1; i++) {
+        const x = this.c(0, i), z = this.c(2, k);
+        let best = Infinity, at = 0, run = 0;
+        seg.forEach((len, n) => {
+          const [ax, az] = pts[n], [bx, bz] = pts[n + 1];
+          const t = clamp(((x - ax) * (bx - ax) + (z - az) * (bz - az)) / (len * len));
+          const d = Math.hypot(x - (ax + (bx - ax) * t), z - (az + (bz - az) * t));
+          if (d < best) (best = d), (at = (run + t * len) / total);
+          run += len;
+        });
+        if (best <= r + 1e-6) for (let j = j0; j < j1; j++) this.set(i, j, k, f(i, j, k, at));
+      }
+    return this;
+  }
+  /** A rod through a path of (z, y) px points (rounded through its corners), `w` voxels across. */
+  path(w, pts, c) {
+    const p = fillet(pts, false, 6);
+    for (let n = 1; n < p.length; n++) this.rod(w, p[n - 1], p[n], c);
+    return this;
+  }
   mark(name, p) {
     this.markers[name] = p.map((v) => Math.round(v * 1e4) / 1e4);
     return this;
@@ -303,18 +342,20 @@ class Model {
 }
 
 /**
- * An open reflex sight: a window `w` x `h` voxels (centred across x, its sill at `sill` px and the
- * frame's rear face at `z` px, both on the grid) in a frame one voxel thick and one deep, its top
+ * An open reflex sight: a window `w` x `h` voxels (centred across x, or `x` voxels to the left, its
+ * sill at `sill` px and the frame's rear face at `z` px, both on the grid) in a frame one voxel
+ * thick and one deep, its top
  * corners chamfered (`chamfer`, on a window three or more tall); the body under it `body` voxels
  * tall and `bodyW` wide, from `back` voxels behind the frame, running on `len` voxels ahead of it
  * `drop` voxels lower and `aheadW` wide. Returns the `sight` point: the window's centre at the
  * frame's rear face.
  */
-function optic(g, { w, h, sill, z, frame, body = 2, bodyW = w + 2, back = 1, len = 0, drop = 1, aheadW = bodyW, colour = 'anod', chamfer = h >= 3 }) {
-  const [x0, x1] = g.xs(w);
+function optic(g, { w, h, sill, z, frame, body = 2, bodyW = w + 2, back = 1, len = 0, drop = 1, aheadW = bodyW, colour = 'anod', chamfer = h >= 3, x = 0 }) {
+  const across = (n) => g.xs(n).map((i) => i + x);
+  const [x0, x1] = across(w);
   const j0 = Math.round(sill / V - g.offset[1]), k = Math.round(z / V - g.offset[2]);
   if (Math.abs(g.b(1, j0) - sill) > 1e-6 || Math.abs(g.b(2, k) - z) > 1e-6) throw new Error(`${g.id}: optic off the grid`);
-  const [b0, b1] = g.xs(bodyW), [a0, a1] = g.xs(aheadW);
+  const [b0, b1] = across(bodyW), [a0, a1] = across(aheadW);
   g.box([b0, j0 - body, k - back], [b1, j0, k + 1], colour);
   g.box([a0, j0 - body, k + 1], [a1, j0 - drop, k + 1 + len], colour);
   for (const x of [x0 - 1, x1]) g.box([x, j0, k], [x + 1, j0 + h, k + 1], frame);
@@ -322,7 +363,7 @@ function optic(g, { w, h, sill, z, frame, body = 2, bodyW = w + 2, back = 1, len
   const corners = chamfer ? [[x0, j0 + h - 1], [x1 - 1, j0 + h - 1]] : [];
   for (const [i, j] of corners) g.box([i, j, k], [i + 1, j + 1, k + 1], frame);
   g.window = { x0, x1, y0: j0, y1: j0 + h, k, corners };
-  return [0, (g.b(1, j0) + g.b(1, j0 + h)) / 2, z];
+  return [x * V, (g.b(1, j0) + g.b(1, j0 + h)) / 2, z];
 }
 
 /**
@@ -704,6 +745,114 @@ function detonator() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The heroes' guns
+
+/**
+ * Wookiee Crossblaster (the bowcaster): the Wookiee's crossbow-blaster, big and hand-made: a wooden
+ * stock bound in leather, a riveted receiver panelled in wood, a quiver of quarrels on its right, a
+ * scope on its left (its open sight at the back), the loaded quarrel glowing green along its top,
+ * two bow arms over the short barrel, out to the sides and curving forward to brass tips, the
+ * string across the front between them.
+ */
+function heroBowcaster() {
+  const g = new Model('hero_bowcaster', 'Wookiee Crossblaster', 'blaster').colours({
+    wood: [0x7a4a26, 0.62], woodDark: [0x5a3418, 0.66], leather: [0x3e2818, 0.85], brass: [0xc9a152, 0.3, 1], brassDark: [0x9a7a3a, 0.35, 1],
+    metal: [0x4f4a43, 0.4, 0.7], metalDark: [0x35322e, 0.45, 0.7], string: [0xd8cfb8, 0.8], bore: [0x0b0b0d, 0.7],
+    bolt: [0x0e9a2a, 0.4, 0, 1], boltHot: [0xd8ffd8, 0.4, 0, 1], scope: [0x2a2622, 0.38, 0.4], lens: [0x10161a, 0.05, 0.3], glint: [0x0e9a2a, 0.08, 0.2, 0.7],
+  });
+  const YC = 3.4375;
+  // The receiver: iron, long and tall, its sides panelled in wood with brass rivets at the panels' corners; a brass rail on top.
+  g.pbox(5, [1.875, 5.625], [-3.125, 10.625], (i, j, k) => {
+    if (Math.abs(i) === 2 && j === 8) return false;
+    if (Math.abs(i) === 2 && j >= 4 && j <= 7 && k >= -3 && k <= 14) return (j === 4 || j === 7) && (k === -3 || k === 14) ? 'brass' : 'wood';
+    return 'metal';
+  });
+  g.pbox(3, [5.625, 6.25], [-1.875, 17.5], 'brassDark');
+  // The stock: long and hand-cut, lashed with leather, a brass butt plate.
+  g.prof([[-3.1, 5.6], [-8.1, 5.3], [-15.6, 5.0, 0.8], [-16.9, 3.4], [-16.9, -2.2, 0.6], [-14.4, -2.5], [-10.0, 0.0, 1.2], [-3.75, 1.9], [-3.1, 1.9]], 3, (i, j, k) =>
+    k === -28 ? 'brass' : k === -12 || k === -11 ? 'leather' : (j + (k >> 2)) % 5 === 0 ? 'woodDark' : 'wood');
+  // The grip (wood, bound in leather), the brass guard and trigger.
+  g.grip(3, [-3.125, 1.875], 1.29, 4, 15, (i, j) => (j === -5 ? 'brass' : j % 3 === 0 ? 'leather' : 'wood'));
+  g.pbox(1, [0, 0.625], [1.25, 4.375], 'brass');
+  g.pbox(1, [0, 1.875], [3.75, 4.375], 'brass');
+  g.box([0, 1, 3], [1, 2, 4], 'brassDark');
+  // The quiver of spare quarrels on the right, their green heads showing at its back.
+  g.box([-4, 3, 2], [-2, 8, 13], (i, j, k) => (k === 2 && i === -3 && (j === 4 || j === 6) ? 'bolt' : j === 3 || j === 7 ? 'brassDark' : 'leather'));
+  // The barrel under the bow, brass bands, the fore-grip under it; the glowing muzzle.
+  g.disc(0.9, [0, YC], [10.625, 22.5], (i, j, k) => (k === 21 || k === 30 ? 'brass' : 'metalDark'));
+  g.prof([[14.4, 2.6], [16.2, 2.6], [15.9, -1.9, 0.3], [14.1, -1.9, 0.3]], 3, (i, j) => (j === -1 || j === -2 ? 'leather' : 'wood'));
+  muzzleRing(g, 0.9, [0, YC], 36, 'bolt');
+  // The bow: its mount on the barrel, two arms out to the sides and curving forward to their brass tips, the string across the front between them.
+  g.box([-2, 7, 26], [3, 11, 29], (i, j, k) => (k === 28 ? 'brassDark' : 'metalDark'));
+  for (const sgn of [1, -1])
+    g.arm([[1.25, 17.2], [5.0, 16.6], [8.8, 17.2], [11.2, 18.8], [12.2, 21.0], [12.2, 22.5]].map(([x, z]) => [x * sgn, z]), 0.55, [4.375, 6.875], (i, j, k, t) =>
+      t > 0.86 ? 'brass' : t < 0.14 ? 'leather' : (j === 8 || j === 9) && t > 0.3 && t < 0.7 ? 'metalDark' : 'metal');
+  g.box([g.cell(0, -12.2), 8, 36], [g.cell(0, 12.2) + 1, 9, 37], (i, j, k) => (g.has(i, j, k) ? undefined : 'string'));
+  // The quarrel loaded along the top: its nock, the shaft glowing, the head over the bow.
+  g.box([0, 10, -2], [1, 11, -1], 'brass');
+  g.box([0, 10, -1], [1, 11, 31], 'bolt');
+  g.box([-1, 10, 31], [2, 11, 32], (i) => (i === 0 ? 'boltHot' : 'bolt'));
+  g.box([0, 10, 32], [1, 11, 33], 'boltHot');
+  // The scope on the left: brackets from the receiver, the open sight at its back on a block, the tube ahead a voxel under the window, the objective glinting green.
+  const sight = optic(g, { w: 3, h: 2, sill: 8.125, z: -1.25, frame: 'brass', body: 5, bodyW: 5, back: 1, colour: 'metalDark', x: 3 });
+  g.box([2, 10, -1], [5, 12, 15], 'scope');
+  g.box([1, 9, 15], [6, 12, 17], (i, j, k) => (k === 16 && i >= 2 && i <= 4 && j >= 10 ? (i === 3 && j === 11 ? 'glint' : 'lens') : 'metalDark'));
+  for (const k of [1, 10]) g.box([3, 6, k], [4, 10, k + 1], 'brassDark');
+  return g.mark('grip', [0, 0, 0]).mark('grip2', [0, 0.3125, 15.3125]).mark('muzzle', [0, YC, g.b(2, 37)]).mark('sight', sight).mark('mag', [-2.1875, 3.4375, 4.6875]);
+}
+
+/**
+ * EE-4 Carbine (the bounty hunter's EE-3): a short, scoped blaster carbine, dark metal worn silver on
+ * its edges: a thick round barrel vented down its sides, the break-open frame and its hammer, a
+ * small curved stock, a long scope on the left of the barrel (its open sight at the back), a
+ * leather sling.
+ */
+function heroEe3() {
+  const g = new Model('hero_ee3', 'EE-4 Carbine', 'blaster').colours({
+    black: [0x1d1e22, 0.34, 0.55], gunmetal: [0x363a41, 0.34, 0.8], worn: [0xa8adb4, 0.28, 1], grip: [0x3a2a1e, 0.6], rubber: [0x1c1c1e, 0.9],
+    sling: [0x5a3a22, 0.85], bore: [0x0b0b0d, 0.7], ring: [0xb0081c, 0.4, 0, 1], red: [0xb00a0a, 0.4, 0, 1],
+    scope: [0x222328, 0.32, 0.45], lens: [0x10161a, 0.05, 0.3], glint: [0xd01c28, 0.08, 0.2, 0.6],
+  });
+  const YC = 3.4375;
+  // The barrel: thick and round, vented down its sides, bands round it; its front cap, the front sight post, the glowing muzzle.
+  g.disc(1.45, [0, YC], [0.625, 11.25], (i, j, k) => (k === 7 || k === 13 ? 'gunmetal' : 'black'));
+  g.paint([-3, 0, 2], [4, 12, 18], (i, j, k) => {
+    const jj = j - g.cell(1, YC);
+    if (Math.abs(i) <= 1 && Math.abs(jj) <= 1) return 'bore';
+    return Math.abs(i) === 2 && jj === 0 && k >= 3 && k <= 16 && k !== 7 && k !== 13 && k % 3 !== 0 ? false : undefined;
+  });
+  g.disc(1.45, [0, YC], [11.25, 11.875], 'gunmetal');
+  g.pbox(1, [5.0, 5.625], [10.625, 11.25], 'worn');
+  muzzleRing(g, 0.9, [0, YC], 19, 'ring');
+  // The frame: the break-open action behind the barrel, its hinge, the hammer's spur behind; the trigger housing under the barrel.
+  g.pbox(3, [1.25, 5.0], [-3.125, 0.625], 'gunmetal');
+  g.box([0, 8, -5], [1, 9, -3], 'black');
+  g.box([-1, 2, 0], [2, 3, 1], 'worn');
+  g.pbox(3, [1.25, 1.875], [0.625, 3.75], 'gunmetal');
+  // The grip (dark wood), the guard and trigger.
+  g.grip(3, [-3.125, 1.25], 1.1, 4, 22, (i, j, k, back) => (j === -5 ? 'gunmetal' : k === back ? 'black' : 'grip'));
+  g.pbox(1, [0, 0.625], [1.25, 3.75], 'gunmetal');
+  g.pbox(1, [0, 1.25], [3.125, 3.75], 'gunmetal');
+  g.box([0, 1, 3], [1, 2, 4], 'worn');
+  // The small curved stock: two struts from the frame to a rubber butt.
+  g.path(3, [[-3.1, 4.4], [-6.4, 4.0, 1.5], [-9.4, 2.2]], 'gunmetal');
+  g.path(3, [[-2.5, 1.0], [-6.2, 0.4, 1.5], [-9.4, -0.1]], 'gunmetal');
+  g.pbox(3, [-0.625, 3.125], [-10.625, -9.375], (i, j, k) => (k === -17 ? 'rubber' : 'gunmetal'));
+  // A red power light on the frame's left.
+  g.set(1, 5, -3, 'red');
+  // The long scope on the left: brackets on the barrel, the open sight at its back on a block, the tube ahead a voxel under the window, the objective glinting.
+  const sight = optic(g, { w: 3, h: 2, sill: 6.875, z: -1.25, frame: 'gunmetal', body: 3, bodyW: 5, back: 1, colour: 'black', x: 3 });
+  g.box([2, 8, -1], [5, 10, 13], 'scope');
+  g.box([1, 7, 13], [6, 10, 15], (i, j, k) => (k === 14 && i >= 2 && i <= 4 && j >= 8 ? (i === 3 && j === 9 ? 'glint' : 'lens') : 'black'));
+  for (const k of [1, 9]) g.box([1, 7, k], [4, 8, k + 1], 'gunmetal');
+  // The worn silver on its edges.
+  g.wear(['black', 'gunmetal'], 'worn', 0.1);
+  // The sling on the left: from a swivel under the barrel's front, slack under the gun, to the butt.
+  g.path([2, 3], [[9.4, 1.6], [4.4, -2.2, 3], [-1.9, -3.4, 3], [-7.5, -2.2, 2], [-10.0, -0.3]], 'sling');
+  return g.mark('grip', [0, 0, 0]).mark('grip2', [0, 1.25, 6.5625]).mark('muzzle', [0, YC, g.b(2, 20)]).mark('sight', sight).mark('mag', [0, 1.875, 0.3125]);
+}
+
+// ---------------------------------------------------------------------------------------------
 // The sabers
 
 /**
@@ -859,7 +1008,7 @@ function glb(g) {
 /** Each model's intended size (px, x y z): the build says how far each is off. */
 const SIZES = {
   imp_rifle: [7.2, 12.9, 27.5], rebel_rifle: [3.1, 12.9, 33], imp_heavy: [5.6, 13.1, 38], rebel_heavy: [4.4, 14.4, 26.3], imp_sniper: [4.4, 14, 37.8], rebel_sniper: [4.4, 12.7, 40.6],
-  imp_pistol: [3.1, 10, 12.4], rebel_pistol: [3.1, 12.5, 14.4], detonator: [4.4, 5.6, 4.4], saber_luke: [3.8, 3.1, 28.1], saber_ben: [3.1, 3.1, 28.8], saber_vader: [3.1, 3.1, 28.1], saber_emperor: [3.1, 3.8, 29.4],
+  imp_pistol: [3.1, 10, 12.4], rebel_pistol: [3.1, 12.5, 14.4], hero_bowcaster: [25, 13.1, 40], hero_ee3: [6.2, 12.5, 23], detonator: [4.4, 5.6, 4.4], saber_luke: [3.8, 3.1, 28.1], saber_ben: [3.1, 3.1, 28.8], saber_vader: [3.1, 3.1, 28.1], saber_emperor: [3.1, 3.8, 29.4],
 };
 
 /** Clip a 2D polygon by a convex counter-clockwise one. */
@@ -1026,7 +1175,7 @@ function show(g) {
 
 const MODELS = {
   imp_rifle: impRifle, rebel_rifle: rebelRifle, imp_heavy: impHeavy, rebel_heavy: rebelHeavy, imp_sniper: impSniper, rebel_sniper: rebelSniper, imp_pistol: impPistol, rebel_pistol: rebelPistol,
-  detonator, saber_luke: saberLuke, saber_ben: saberBen, saber_vader: saberVader, saber_emperor: saberEmperor,
+  detonator, hero_bowcaster: heroBowcaster, hero_ee3: heroEe3, saber_luke: saberLuke, saber_ben: saberBen, saber_vader: saberVader, saber_emperor: saberEmperor,
 };
 const args = process.argv.slice(2);
 const only = args.filter((a) => !a.startsWith('--'));

@@ -52,6 +52,19 @@ export const LOOKS: Record<string, ItemLook> = {
     trail: '#ff3b30',
     sounds: { draw: 'detonator_arm', use: 'toss', hit: 'clink' },
   },
+  // The heroes' guns (their gameplay is the heroes' server code): the Wookiee's bowcaster, the bounty hunter's carbine.
+  hero_bowcaster: {
+    icon: { gltf: url('hero_bowcaster') },
+    hold: { style: 'gun', model: HeldModels.gltf(url('hero_bowcaster')), gun: FP },
+    tracer: '#5dff6a',
+    sounds: { use: 'blaster_sniper', reload: 'vent', empty: 'overheat' },
+  },
+  hero_ee3: {
+    icon: { gltf: url('hero_ee3') },
+    hold: { style: 'gun', model: HeldModels.gltf(url('hero_ee3')), gun: FP },
+    tracer: TEAMS[1].bolt,
+    sounds: { use: 'blaster_pistol', reload: 'vent', empty: 'overheat' },
+  },
   ...Object.fromEntries(
     HERO_IDS.map((id) => [
       saberOf(id),

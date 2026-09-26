@@ -137,6 +137,48 @@ function drift(cx: number, cz: number, len: number, wid: number, height: number,
     }
 }
 
+/** A bank of snow: a smooth mound, `rx` by `rz`, `h` high in the middle (climbable, but it hides what's behind it). */
+function bank(cx: number, cz: number, rx: number, rz: number, h: number) {
+  for (let z = Math.floor(cz - rz); z <= Math.ceil(cz + rz); z++)
+    for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) {
+      const d = Math.hypot((x + 0.5 - cx) / rx, (z + 0.5 - cz) / rz);
+      if (d < 1) raise(x, z, h * (1 - d * d));
+    }
+}
+
+/** The banks between the three ways across the field, north and south: snow and rock by turns, with passes (not in line). */
+const DIVIDERS: { z: number; passes: number[]; k: number }[] = [
+  { z: -27, passes: [-41, -9, 17], k: 1 },
+  { z: 27, passes: [-47, -21, 5], k: 2 },
+];
+const dividerSlots = (d: (typeof DIVIDERS)[number], fn: (x: number, z: number, snow: boolean) => void) => {
+  for (let x = -58; x <= 22; x += 4) {
+    if (d.passes.some((p) => Math.abs(x - p) < 5)) continue;
+    fn(x + 0.5, d.z + 0.5 + (noise(x, d.z, 6, 120 + d.k) - 0.5) * 2, ((x + 58) / 4) % 2 === 0);
+  }
+};
+
+/** Snow banks elsewhere (x, z, rx, rz, h). */
+const BANKS: [number, number, number, number, number][] = [
+  [-48, -33, 4, 3.5, 4.5],
+  [-18, -33, 4, 3.5, 4.5],
+  [8, -33, 4, 3.5, 4.5],
+  [-36, -48, 4, 3.5, 4.5],
+  [-56, 33, 4, 3.5, 4.5],
+  [-28, 33, 4, 3.5, 4.5],
+  [2, 33, 4, 3.5, 4.5],
+  [-40, 36, 4, 3, 4],
+  [-16, 37, 3.5, 3, 4],
+  [8, 49, 4, 3.5, 4.5],
+  [44, 48, 4, 3.5, 4.5],
+  [-40, -15, 4, 3.5, 4.5],
+  [-58, 17, 4, 3.5, 4.5],
+  [15, -20, 3.5, 3.5, 4.5],
+  [30, 4, 3, 4, 4],
+  [28, -6, 2.5, 3, 3.5],
+  [-22, -13, 3.5, 3.5, 4],
+];
+
 /** The ridge D stands on: a long bank four up, walkable up either side anywhere, round the post a wide top. */
 function ridge() {
   for (let z = RIDGE.z0 - 8; z <= RIDGE.z1 + 8; z++)
@@ -178,9 +220,10 @@ const TRENCH_LINE: [number, number][] = [
   [-31, 34],
   [-31, 50],
 ];
-/** Ramps out of it, west (toward the base), and the planks across it. */
+/** Ramps out of it, west (toward the base) and east (toward the field), and the planks across it. */
 const TRENCH_RAMPS = [-44, -29, -15, 0, 13, 27, 42];
-const TRENCH_PLANKS = [-45, -16, 12, 41];
+const TRENCH_RAMPS_EAST = [-47, -33, -18, -4, 10, 24, 38];
+const TRENCH_PLANKS = [-45, -30, -16, 0, 12, 26, 41];
 
 function trenchCells(fn: (x: number, z: number) => void) {
   for (let i = 0; i + 1 < TRENCH_LINE.length; i++) {
@@ -196,11 +239,16 @@ function trenches() {
     level(x, z, TRENCH);
     inTrench.add(hi(x, z));
   });
-  // Ramps out on the west side, six half steps up to the field.
+  // Ramps out, six half steps up to the field: west to the base, east to the field.
   for (const rz of TRENCH_RAMPS) {
     let edge = -99;
     for (let x = -40; x <= -20; x++) if (inTrench.has(hi(x, rz))) edge = edge === -99 ? x : edge;
     for (let i = 1; i <= 6; i++) for (let z = rz - 1; z <= rz + 1; z++) level(edge - i, z, TRENCH + i * 0.5);
+  }
+  for (const rz of TRENCH_RAMPS_EAST) {
+    let edge = 99;
+    for (let x = -20; x >= -40; x--) if (inTrench.has(hi(x, rz))) edge = edge === 99 ? x : edge;
+    for (let i = 1; i <= 6; i++) for (let z = rz - 1; z <= rz + 1; z++) if (!inTrench.has(hi(edge + i, z))) level(edge + i, z, TRENCH + i * 0.5);
   }
 }
 
@@ -250,6 +298,8 @@ function snowfield() {
   for (const [x, z, len, wid, h, lee] of DRIFTS) drift(x, z, len, wid, h, lee);
   ridge();
   gully();
+  for (const [x, z, rx, rz, h] of BANKS) bank(x, z, rx, rz, h);
+  for (const d of DIVIDERS) dividerSlots(d, (x, z, snow) => snow && bank(x, z, 4.5, 3.6, 5));
   trenches();
   // Level ground for the posts, the hangar's apron, the cannon and the landing zone.
   flat(-63, 0, 15);
@@ -520,7 +570,8 @@ function postC() {
   });
   fill(-13, G, 7, -6, G, 11, 'floor_grate');
   // Power converters, fuel, low walls round the post.
-  for (const [x, z] of [[8, 4], [12, 14], [-2, 17], [-4, 1]] as const) fill(x, FLOOR, z, x + 1, FLOOR + 2, z + 2, (_x, y) => (y === FLOOR + 2 ? 'pad_blue' : 'durasteel_dark'));
+  for (const [x, z] of [[8, 4], [12, 14], [-2, 17], [-4, 1], [13, 10]] as const)
+    fill(x, FLOOR, z, x + 1, FLOOR + 2, z + 2, (xx, y, zz) => (y === FLOOR + 2 ? (xx === x && zz === z + 1 ? 'pad_blue' : 'base_panel') : y === FLOOR + 1 && zz === z + 1 ? 'hazard' : 'durasteel_dark'));
   props.drums(L, 6, FLOOR, 17, 4, 80);
   props.crates(L, -4, FLOOR, 2, 2, 2, 2, 81);
   snowWall(14, 6, 5, 'z');
@@ -544,6 +595,11 @@ function postD() {
     if (get(x, y, z) === undefined || get(x, y, z) === 'air') set(x, y - 1, z, hash(i, 3, 82) < 0.5 ? 'gray_concrete' : 'hull_dark');
   }
   props.crates(L, 40, top, 4, 2, 2, 2, 83);
+  // Armour plates blown off it, lying on the slope toward the field: cover coming up.
+  for (const [x, z, n] of [[35, 6, 3], [36, -12, 3], [33, -2, 2]] as const) {
+    const y = FLOOR + Math.floor(H(x, z));
+    fill(x, y, z, x, y + 1, z + n - 1, (_x, yy) => (yy === y ? 'durasteel_dark' : 'durasteel'));
+  }
   props.drums(L, 50, top, 3, 3, 84);
   props.commandPost(L, DEAD.x, top, DEAD.z, 'imperial_red', 2);
 }
@@ -609,7 +665,7 @@ function rock(cx: number, cz: number, rx: number, rz: number, h: number, k: numb
     for (let x = Math.floor(cx - rx - 1); x <= Math.ceil(cx + rx + 1); x++) {
       const d = inside(x, z);
       if (d > 1 || inTrench.has(hi(x, z))) continue;
-      const top = base + Math.round(3 + (h - 3) * (1 - d ** 3) + noise(x, z, 3, 90 + k) * 1.5);
+      const top = base + Math.round(3 + (h - 3) * (1 - d ** 6) + (noise(x, z, 2, 90 + k) - 0.5) * 2.5);
       for (let y = FLOOR + Math.floor(H(x, z)); y < top; y++) set(x, y, z, y === top - 1 ? 'snow_block' : hash(x, y, z + k) < 0.12 ? 'ice' : 'frost_rock');
     }
 }
@@ -634,37 +690,24 @@ function serac(cx: number, cz: number, r: number, h: number, k: number) {
   });
 }
 
-/** A long bank of rock between two ways across the field, with gaps (passes) to cross by. */
-function divider(z: number, x0: number, x1: number, passes: number[], k: number) {
-  for (let x = x0; x <= x1; x += 4) {
-    if (passes.some((p) => Math.abs(x - p) < 5)) continue;
-    rock(x + 0.5, z + 0.5 + (noise(x, z, 6, 120 + k) - 0.5) * 2, 3.2, 2.6, 6 + Math.round(noise(x, z, 4, 121 + k) * 2), k * 100 + x);
-  }
-}
-
 function scatter() {
-  // The banks between the ways: the north one and the south one, three passes each (not in line).
-  divider(-27, -58, 22, [-41, -9, 17], 1);
-  divider(27, -58, 22, [-47, -21, 5], 2);
+  // The rock in the banks between the ways (the snow's in the field already).
+  for (const d of DIVIDERS) dividerSlots(d, (x, z, snow) => snow || rock(x, z, 3.2, 2.6, 6 + Math.round(noise(x, z, 4, 121 + d.k) * 2), d.k * 100 + Math.round(x)));
   // Across the middle: rock and ice staggered, so nobody sees along it.
   rock(-12, -6, 2.6, 7, 6, 1);
   serac(-20, 14, 3.5, 8, 2);
   rock(20, -12, 2.8, 5.5, 6, 3);
   serac(24, 13, 3, 8, 4);
-  rock(15, -20, 3, 3, 6, 18);
   serac(15, -46, 2.5, 7, 47);
-  serac(-19, 2, 2.6, 6, 48);
+  serac(-19, 3, 2.9, 6, 48);
+  // The landing zone's flanks.
+  rock(62, -26, 3, 3, 6, 35);
+  rock(62, 26, 3, 3, 6, 36);
   rock(-58, 46, 3, 3, 6, 51);
   serac(-44, 22, 2, 6, 52);
-  rock(-22, -13, 2.5, 2.5, 5, 49);
   serac(-34, -12, 2, 5, 50);
-  rock(8, 49, 3, 3, 6, 49);
   for (const [x, z] of [[-60, 56], [-30, 57], [0, 56], [50, 56], [90, 55]] as const) rock(x, z, 4, 3, 7, 50 + x);
   // Along the north way, and against the mountains' foot.
-  rock(-48, -33, 3, 3, 6, 19);
-  rock(-18, -33, 3, 2.8, 6, 20);
-  rock(8, -33, 3, 3, 6, 21);
-  rock(-36, -48, 3, 3, 6, 22);
   rock(-40, -56, 4, 3, 7, 23);
   rock(12, -56, 4, 3, 8, 24);
   rock(60, -55, 4, 3, 7, 25);
@@ -682,25 +725,14 @@ function scatter() {
   rock(14, 44, 3, 3, 6, 14);
   rock(58, 47, 3, 3, 5, 15);
   // Between the gully and the south bank, and against the mountains' foot.
-  rock(-56, 33, 3, 2.8, 6, 27);
-  rock(-28, 33, 3, 2.8, 6, 28);
-  rock(2, 33, 3, 2.8, 6, 29);
   rock(-50, 51, 4, 3, 7, 30);
   rock(-10, 52, 4, 3, 7, 31);
   rock(30, 52, 4, 3, 8, 32);
   rock(72, 51, 4, 3, 7, 33);
-  rock(44, 48, 3, 3, 6, 39);
-  rock(-40, 36, 3, 2.5, 6, 40);
-  rock(-16, 37, 2.5, 2.5, 6, 41);
   rock(102, -20, 3, 3, 7, 42);
   rock(102, 20, 3, 3, 7, 43);
   rock(66, -46, 3, 3, 6, 44);
   rock(66, 46, 3, 3, 6, 45);
-  // North of the shield generator; the landing zone's flanks.
-  rock(-40, -15, 3, 3, 6, 34);
-  rock(-58, 17, 3, 3, 6, 46);
-  rock(62, -26, 3, 3, 6, 35);
-  rock(62, 26, 3, 3, 6, 36);
   // By the base's apron, north and south, and ice buttresses out of the glacier's cliff.
   serac(-70, -38, 3.5, 9, 16);
   serac(-70, 38, 3.5, 9, 17);
@@ -720,6 +752,21 @@ function scatter() {
   props.crates(L, -20, FLOOR + H(-20, -6), -6, 2, 1, 2, 88);
   props.crates(L, 86, FLOOR, -13, 2, 2, 2, 89);
   props.crates(L, 86, FLOOR, 12, 2, 2, 2, 90);
+}
+
+/** What snow settles on: flat tops of plate, panels, hulls and cargo. */
+const SETTLES = new Set(['durasteel', 'durasteel_dark', 'base_panel', 'hull', 'hull_dark', 'crate', 'crate_metal', 'hazard', 'floor_grate', 'spruce_planks', 'vaporator_base']);
+
+/** A dusting of snow (a slab) on every open-topped roof and machine three or more up. */
+function dust() {
+  const topY = field.origin.y + field.size.y - 1;
+  for (let z = HZ0; z < HZ0 + HD; z++)
+    for (let x = HX0; x < HX0 + HW; x++) {
+      let y = topY;
+      while (y > FLOOR + 2 && (get(x, y, z) === undefined || get(x, y, z) === 'air')) y--;
+      const b = get(x, y, z);
+      if (y > FLOOR + 2 && y < topY && typeof b === 'string' && SETTLES.has(b)) set(x, y + 1, z, 'snow_slab');
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -742,6 +789,7 @@ function build() {
   postD();
   landingZone();
   scatter();
+  dust();
 }
 build();
 
@@ -881,7 +929,7 @@ export const FROSTLINE: MapSpec = {
   name: 'Frostline Base',
   blurb: 'An ice-planet base: hold the shield generator, the ion cannon and the ridge',
   floorY: FLOOR,
-  time: 0.34,
+  time: 0.36,
   ground: { top: 'snow_block', fill: 'snow_block' },
   structures: [field, ...bands, floor],
   terraform: [],

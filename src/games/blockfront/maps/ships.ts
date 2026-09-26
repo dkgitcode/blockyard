@@ -275,27 +275,43 @@ export function walker(c: Canvas, y: number) {
 /**
  * One of the walkers, brought down: lying on its side along x (nose west), its roof toward +z
  * and its underside toward -z, its lower legs out along the snow that way, the upper pair broken
- * off short, the head torn away (`walkerHead` puts it somewhere). Eight high: a wall of armour.
+ * off short, a hole burnt in its flank, the head torn away (`walkerHead` puts it somewhere). Nine
+ * high: a wall of armour.
  */
 export function walkerWreck(c: Canvas, y: number) {
-  // The body, fallen: nine tall (its width), eight deep (its height), a dent and a hole torn in it.
+  // The body, fallen: nine tall (its width), eight deep (its height), its long edges cut off.
   box(c, -10, y, 0, 9, y + 8, 7, (x, yy, z) => {
-    if ((x === -10 || x === 9) && (yy === y + 8 || yy === y) && (z === 0 || z === 7)) return undefined;
-    if (z === 7 && Math.abs(yy - y - 4) === 4) return undefined;
-    if (x >= -2 && x <= 1 && yy >= y + 6 && z >= 4) return undefined;
-    if (z === 0 || z === 4 || (x + 10) % 5 === 0) return 'durasteel_dark';
-    return hash(x, yy, z) < 0.12 ? 'hull_dark' : 'durasteel';
+    const k = yy - y;
+    const corner = (k === 0 || k === 8) && (z === 0 || z === 7);
+    if (corner || (z === 7 && (k <= 1 || k >= 7))) return undefined;
+    if ((x === -10 || x === 9) && (k === 0 || k === 8)) return undefined;
+    // Seams: round the middle, and a rib every five along the roof and the flank on top.
+    if (z === 4 && (k === 0 || k === 8)) return 'durasteel_dark';
+    if ((x + 10) % 5 === 0 && (z === 7 || k === 8)) return 'durasteel_dark';
+    return hash(x, yy, z) < 0.05 ? 'hull_dark' : 'durasteel';
   });
-  // The legs that were underneath: out along the snow, bent at the knee.
+  // A hole burnt in the flank on top, embers in it.
+  box(c, -3, y + 7, 2, 1, y + 8, 5, (x, yy, z) => (yy === y + 7 && (x + z) % 2 === 0 ? 'pad_amber' : yy === y + 7 ? 'black_concrete' : 'air'));
+  // Ribs across the belly, and the hips the legs hang from.
+  for (let x = -8; x <= 7; x += 3) box(c, x, y + 2, -1, x, y + 6, -1, 'hull_dark');
   for (const lx of [-8, 5]) {
-    box(c, lx, y, -12, lx + 1, y + 1, -1, (_x, _yy, z) => (z === -6 || z === -7 ? 'durasteel_dark' : 'durasteel'));
-    box(c, lx - 1, y, -15, lx + 2, y + 1, -13, 'durasteel_dark');
+    box(c, lx - 1, y, -1, lx + 2, y + 2, -1, 'durasteel_dark');
+    box(c, lx - 1, y + 6, -1, lx + 2, y + 8, -1, 'durasteel_dark');
+  }
+  // The legs that were underneath: out along the snow, a knee halfway, a broad foot at the end.
+  for (const lx of [-8, 5]) {
+    box(c, lx, y, -12, lx + 1, y + 1, -2, 'durasteel');
+    box(c, lx - 1, y, -8, lx + 2, y + 2, -6, (x, yy, z) => (yy === y + 2 && (x === lx - 1 || x === lx + 2) && (z === -8 || z === -6) ? undefined : 'durasteel_dark'));
+    box(c, lx - 1, y, -15, lx + 2, y, -13, 'durasteel_dark');
+    box(c, lx, y + 1, -14, lx + 1, y + 1, -13, 'hull_dark');
     // The upper ones, snapped off.
     box(c, lx, y + 7, -3, lx + 1, y + 8, -1, 'durasteel');
     c.set(lx, y + 7, -4, 'hull_dark');
   }
-  // The neck's stump.
+  // The neck's stump, torn cables out of it.
   box(c, -13, y + 3, 2, -11, y + 5, 4, 'hull_dark');
+  c.set(-14, y + 4, 3, 'vaporator_pipe');
+  c.set(-14, y + 3, 2, 'black_concrete');
 }
 
 /** A walker's head, torn off and lying tipped on its side, half in the snow. */

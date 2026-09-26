@@ -5,8 +5,9 @@ import type { BlockDefinition } from '@platform';
  * for the domes and the steps up to the roofs), painted round windows and dark doorways, sandstone
  * paving and packed sand; the Empire's durasteel panels, floor grates and strip lights; the
  * Rebels' olive hangar panels, amber lamps and hazard stripes; cloth awnings, crates, fuel drums
- * and moisture vaporators; ship hulls and engine glow; the canyon's banded rock. Painted in code;
- * every screen and the server know them (shared.ts).
+ * and moisture vaporators; ship hulls and engine glow; the canyon's banded rock; and for the ice
+ * planet, snow slabs, packed snow, glacier ice, frost rock and the Rebels' base panels. Painted in
+ * code; every screen and the server know them (shared.ts). The budget is 68 variants.
  */
 
 /** A steady pseudo-random number in [0, 1) for a pixel (grain, specks, rivets). */
@@ -201,6 +202,31 @@ const BANNER_IMPERIAL = { paint: (x: number, y: number) => (x < 2 || x > 13 ? '#
 
 const SHADOW = { color: ['#2b221a', '#261e17', '#30271e'], noise: 0.3, scale: 3, seed: 81 };
 
+// ---------------------------------------------------------------------------------------------
+// The ice planet
+// ---------------------------------------------------------------------------------------------
+
+/** Trodden snow: the paths between the posts, grey-blue with boot prints. */
+const PACKED_SNOW = { paint: (x: number, y: number) => shade(grain(x >> 1, y >> 2, 90) < 0.12 ? '#b9c6d2' : '#d3dde6', 0.97 + 0.05 * grain(x, y, 91)) };
+/** Glacier ice in bands: blue-white, a darker streak, a crack. */
+const GLACIER = {
+  paint: (x: number, y: number) => {
+    const band = ((y + Math.floor(grain(x >> 3, 0, 92) * 3)) >> 2) % 3;
+    if (grain(x, y >> 1, 93) < 0.03) return '#7fa7c4';
+    return shade(band === 0 ? '#cfe6f5' : band === 1 ? '#b3d4ec' : '#c2def2', 0.97 + 0.05 * grain(x, y, 94));
+  },
+};
+/** Blue-grey rock, flecked. */
+const FROST_ROCK = { paint: (x: number, y: number) => shade(grain(x >> 1, y >> 1, 95) < 0.18 ? '#4d5663' : '#66707d', 0.94 + 0.12 * grain(x, y, 96)) };
+/** The Rebels' insulated base panels: off-white, ribbed, a bolt at each corner. */
+const BASE_PANEL = {
+  paint: (x: number, y: number) => {
+    if (x === 0 || y === 0) return '#8e979f';
+    if ((x === 2 || x === 13) && (y === 2 || y === 13)) return '#9aa3ab';
+    return (x & 3) === 3 ? '#c9cfd4' : shade('#dde2e6', 0.98 + 0.03 * grain(x, y, 97));
+  },
+};
+
 export const BLOCKS: Record<string, BlockDefinition> = {
   // The town.
   plaster: { texture: PLASTER, hardness: 1 },
@@ -245,10 +271,16 @@ export const BLOCKS: Record<string, BlockDefinition> = {
   hull_slab: { label: 'Hull Plating Slab', texture: HULL, shape: 'slab', full: 'hull', hardness: 2 },
   cockpit: { label: 'Cockpit Glass', texture: COCKPIT, hardness: 1 },
   engine_glow: { texture: GLOW_BLUE, light: 12, glow: 1, hardness: 1 },
-  thruster: { texture: { front: GLOW_BLUE, all: HULL_DARK }, boxes: [[3, 3, 0, 13, 13, 16]], facing: true, light: 7, glow: 0.6, hardness: 1 },
+  thruster: { texture: { top: GLOW_BLUE, bottom: GLOW_BLUE, all: HULL_DARK }, boxes: [[3, 0, 3, 13, 16, 13]], facing: 'axis', light: 7, glow: 0.6, hardness: 1 },
   // The canyon.
   canyon_rock: { texture: strata(['#c4854f', '#b87844', '#cf9660', '#a86a3a']), hardness: 3 },
   canyon_rock_pale: { label: 'Pale Canyon Rock', texture: strata(['#d9b07c', '#cfa26d', '#e0bb8a', '#c49565']), hardness: 3 },
+  // The ice planet.
+  snow_slab: { label: 'Snow Slab', texture: 'snow', shape: 'slab', full: 'snow_block', hardness: 0.4 },
+  packed_snow: { label: 'Packed Snow', texture: PACKED_SNOW, hardness: 0.6 },
+  glacier: { label: 'Glacier Ice', texture: GLACIER, hardness: 3 },
+  frost_rock: { label: 'Frost Rock', texture: FROST_ROCK, hardness: 3 },
+  base_panel: { label: 'Base Panel', texture: BASE_PANEL, hardness: 2 },
   // Poles, rails, getting up.
   pole: { label: 'Wooden Pole', texture: { top: 'spruce_log_top', bottom: 'spruce_log_top', side: 'spruce_log' }, shape: 'post', hardness: 1 },
   railing: { texture: VAPOR, shape: 'fence', hardness: 1.5 },

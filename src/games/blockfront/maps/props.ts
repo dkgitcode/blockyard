@@ -35,6 +35,17 @@ export function vaporator(c: Canvas, x: number, y: number, z: number, h = 7) {
   c.set(x, y + h, z, 'vaporator_pipe');
 }
 
+/**
+ * A gun emplacement, facing west: a round base of panels, a squat dark turret on it with a shield
+ * over its twin barrels. Somewhere to stand and fight from.
+ */
+export function turret(c: Canvas, x: number, y: number, z: number) {
+  for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) if (Math.abs(dx) + Math.abs(dz) < 4) c.set(x + dx, y, z + dz, 'base_panel');
+  box(c, x, y + 1, z - 1, x + 1, y + 2, z + 1, 'durasteel_dark');
+  box(c, x - 1, y + 3, z - 1, x + 1, y + 3, z + 1, slab('hull'));
+  for (const dz of [-1, 1]) box(c, x - 4, y + 2, z + dz, x - 1, y + 2, z + dz, 'hull_dark');
+}
+
 /** A water tank on stilts: four legs, a drum of dark plating three across, a vent on top (walk under it). */
 export function waterTank(c: Canvas, x: number, y: number, z: number) {
   for (const [dx, dz] of [[0, 0], [2, 0], [0, 2], [2, 2]] as const) for (let k = 0; k < 3; k++) c.set(x + dx, y + k, z + dz, 'pole');
@@ -100,8 +111,8 @@ export function landspeeder(c: Canvas, x0: number, y: number, z0: number, body: 
   c.set(x1, y + 1, z1, 'hull_dark');
   c.set(x1, y + 1, z0 + 1, 'hull');
   c.set(x1, y + 2, z0 + 1, slab('hull'));
-  c.set(x1 + 1, y + 1, z0, 'thruster[facing=east]');
-  c.set(x1 + 1, y + 1, z1, 'thruster[facing=east]');
+  c.set(x1 + 1, y + 1, z0, 'thruster[axis=x]');
+  c.set(x1 + 1, y + 1, z1, 'thruster[axis=x]');
 }
 
 /**

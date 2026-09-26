@@ -71,6 +71,7 @@ function sanitizeInput(raw: unknown): PlayerInput | null {
   const viewSeq = int(raw.viewSeq, -1, Number.MAX_SAFE_INTEGER);
   if (typeof raw.active !== 'boolean' || !down || !pressed || buttons === null || clicked === null || mouseX === null || mouseY === null || wheel === null || yaw === null || pitch === null || viewSeq === null) return null;
   const out: PlayerInput = { active: raw.active, down, pressed, buttons, clicked, mouseX, mouseY, wheel, yaw, pitch, viewSeq };
+  if (raw.dead === true && !raw.active) out.dead = true;
   if (raw.move !== undefined) {
     if (!Array.isArray(raw.move) || raw.move.length !== 2) return null;
     const x = num(raw.move[0], -1, 1);

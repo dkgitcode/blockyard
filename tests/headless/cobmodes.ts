@@ -2,6 +2,7 @@ import type { Headless } from '../../src/platform/host/headless';
 import { match } from '../../src/games/callofblocky/match';
 import { KAHUNA } from '../../src/games/callofblocky/maps/kahuna';
 import { ROUNDS, TDM_LIMIT, TEAMS } from '../../src/games/callofblocky/modes';
+import { SCORES, VOTING } from '../../src/games/callofblocky/nextvote';
 import { OUTFITS } from '../../src/games/callofblocky/art';
 import { check, launch } from './_harness';
 
@@ -173,7 +174,8 @@ export function rotation() {
   g.commands.run('win');
   check(match.phase === 'over', 'the match is over');
   const t1 = performance.now();
-  h.run(13, { until: () => match.phase === 'playing' });
+  // (The final scores, then the vote on what's next: nobody votes, so it's the rotation's next.)
+  h.run(SCORES + VOTING + 1, { until: () => match.phase === 'playing' });
   h.run(0.5);
   const moved = (performance.now() - t1) / 1000;
   check(now().mode === 'tdm' && now().map === 'kahuna', `next up: Team Deathmatch at Big Kahuna Burger (got ${now().mode} on ${now().map})`);

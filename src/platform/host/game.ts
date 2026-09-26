@@ -556,6 +556,7 @@ export class GameHost {
         const i = client.input;
         const n = c.input;
         i.active = n.active;
+        i.dead = n.dead;
         i.down = n.down;
         i.move = n.move;
         i.buttons = n.buttons;

@@ -24,6 +24,14 @@ export class PadNav {
   sync() {
     const all = this.controls();
     if (this.current && all.includes(this.current) && !this.placed) return;
+    // Redrawn (a menu's entries replaced): the highlight stays on the one in the same place.
+    const key = this.current?.dataset.padKey;
+    const again = key !== undefined && !this.current!.isConnected ? all.find((el) => el.dataset.padKey === key) : undefined;
+    if (again && !this.placed) {
+      this.current = null;
+      this.focus(again);
+      return;
+    }
     this.placed = true;
     this.focus(this.first(all));
   }

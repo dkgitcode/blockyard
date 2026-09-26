@@ -9,6 +9,7 @@ import { MAPS, mapById, type SpawnPoint } from './map';
 import { fighterOf, hostile, match, teamFighters, type Fighter } from './match';
 import { FFA_LIMIT, MODES, ROTATION, ROUNDS, TDM_LIMIT, TEAMS, type MatchPlan, type ModeId, type Team } from './modes';
 import { COLORS, fighterModel, shared } from './shared';
+import { NextVote, SCORES, VOTING } from './nextvote';
 import { SkipVote } from './skipvote';
 import { BLURBS, defineWeapons, feedIcon, LETHAL_BLURBS, LETHAL_COUNT, LETHALS, PRIMARIES, SIDEARMS, WEAPONS, weaponName, type Lethal, type Primary } from './weapons';
 import { outfitId, setupProgression, type Progression } from './progression'; // [progression]
@@ -47,7 +48,11 @@ const MAX_FIGHTERS = 8;
 const RESPAWN = 3;
 /** How long the Adrenaline Shot lasts. */
 const RUSH = 15;
-/** Seconds between the end of a match and the next; between a match skipped (a vote) and the next. */
+/**
+ * Seconds between the end of a match and the next: with people in it, its final scores, then the
+ * vote on what's next (nextvote.ts); with nobody but bots, the scores alone. Between a match
+ * skipped (a vote) and the next, a moment.
+ */
 const INTERMISSION = 12;
 const SKIP_PAUSE = 4;
 const BOT_NAMES = ['Lucky Lou', 'Dolly Dagger', 'Sal Nero', 'Candy Kane', 'Rocco', 'Velma', 'Big Tony', 'Honey', 'Duke', 'Jackie Rabbit', 'Frankie Two-Guns', 'Mona', 'Zed', 'Butch'];
@@ -57,6 +62,9 @@ let fighters = match.fighters;
 let running = false;
 let startedAt = 0;
 let overAt = 0;
+/** How long this intermission lasts, and whether the vote on what's next is still to open in it. */
+let intermission = INTERMISSION;
+let voteNext = false;
 let firstBlood = false;
 let bots: Bots;
 let rounds: CaseRounds;
@@ -87,6 +95,8 @@ let offered = false;
 /** The vote to skip the match that's on (skipvote.ts), and whether the match now over was skipped. */
 let vote: SkipVote;
 let skipped = false;
+/** The vote on the next match's mode and map, once a match is played out (nextvote.ts). */
+let next: NextVote;
 /** [progression] XP, levels and unlocks (progression.ts). */
 let xp: Progression;
 
@@ -537,8 +547,12 @@ function endMatch(game: GameContext, winner: Player | null, team?: Team) {
     game.store.set(key, s);
     p.hud.toast(`All time: ${s.wins} wins · ${s.kills} kills · best streak ${s.best}`);
   }
-  // What's next: the rotation's next match in a public room; the same again in one's own.
+  // What's next: the rotation's next match in a public room, the same again in one's own; or,
+  // with people in it, what they vote for once they've seen the scores.
   plan = nextPlan(game);
+  voteNext = next.people().length > 0;
+  intermission = voteNext ? SCORES + VOTING : INTERMISSION;
+  settings?.close();
   game.audio.play('match_end');
   scoreboard(game, true);
 }
@@ -626,13 +640,13 @@ function scoreboard(game: GameContext, show = false) {
     player: f.player,
   }));
   const where = match.map.name.toUpperCase();
-  const next = `Next: ${planName(plan)} in ${Math.max(0, Math.ceil(INTERMISSION - (game.clock.now - overAt)))}`;
+  const coming = `Next: ${planName(next.open ? next.winner() : plan)}${next.open ? ' (voting)' : ''} in ${Math.max(0, Math.ceil(intermission - (game.clock.now - overAt)))}`;
   const sides = `${TEAMS[0].short} ${match.score[0]} · ${TEAMS[1].short} ${match.score[1]}`;
   const footer =
     match.phase === 'over'
       ? teams
-        ? `${sides} · ${next}`
-        : next
+        ? `${sides} · ${coming}`
+        : coming
       : match.mode.id === 'ffa'
         ? `First to ${FFA_LIMIT} · ${fmt(left)} left`
         : match.mode.id === 'tdm'
@@ -764,12 +778,16 @@ function spectate(f: Fighter) {
 // -------------------------------------------------------------------------------------------------
 
 /**
- * What's on after this match: in a public room the rotation's next; in a room of one's own the
- * same again (M picks another), unless this one's being skipped, when it's the one after it in
- * the rotation.
+ * What's on after this match: in a public room the rotation's next (never this one again, which
+ * a vote on what's next can bring round); in a room of one's own the same again (M picks another),
+ * unless this one's being skipped, when it's the one after it in the rotation.
  */
 function nextPlan(game: GameContext, skipping = false): MatchPlan {
-  if (game.room === 'public') return ROTATION[++turn % ROTATION.length];
+  if (game.room === 'public') {
+    let p = ROTATION[++turn % ROTATION.length];
+    if (p.mode === match.mode.id && p.map === match.map.id) p = ROTATION[++turn % ROTATION.length];
+    return p;
+  }
   if (!skipping) return plan;
   const at = ROTATION.findIndex((m) => m.mode === match.mode.id && m.map === match.map.id);
   return ROTATION[(at + 1) % ROTATION.length];
@@ -786,7 +804,9 @@ function skipMatch(game: GameContext) {
   const was = planName({ mode: match.mode.id, map: match.map.id });
   match.phase = 'over';
   skipped = true;
-  overAt = game.clock.now - (INTERMISSION - SKIP_PAUSE);
+  overAt = game.clock.now;
+  intermission = SKIP_PAUSE;
+  voteNext = false;
   if (isCase()) rounds.end();
   xp.matchOver([]); // [progression] no placing in a match skipped (what was earned in it is kept)
   for (const f of fighters.values()) {
@@ -805,6 +825,8 @@ const MODE_ICONS: Record<ModeId, IconRef> = { ffa: { item: 'pistol', view: 'side
 const MAP_ICONS: Record<string, IconRef> = { jackrabbit: { block: 'neon_cyan' }, kahuna: { block: 'thatch' }, hijacked: { block: 'porthole' } };
 
 function matchMenu(game: GameContext, p: Player) {
+  // Between matches, M brings back the vote on what's next.
+  if (next.open) return next.offer(p);
   if (game.room === 'public') {
     // (`plan` is the match on now: the next is the rotation's after it.)
     p.hud.toast(`Public games go round the modes and maps · next: ${planName(ROTATION[(turn + 1) % ROTATION.length])} · V votes to skip this one`);
@@ -886,12 +908,15 @@ export default defineServer(shared, {
     // (Development: tests reach the match and the streaks.)
     if (import.meta.env.DEV) (globalThis as unknown as { __cob: unknown }).__cob = { match, streaks };
     vote = new SkipVote(game, { color: (p) => nameColor(p, COLORS.gold), skip: () => skipMatch(game) });
+    next = new NextVote(game, { modeIcon: (id) => MODE_ICONS[id], mapIcon: (id) => MAP_ICONS[id] ?? { block: 'stone' }, name: planName });
     game.events.on('playerJoin', ({ player }) => {
       const f = fighters.get(player.id) ?? addFighter(game, player);
       if (player.bot) bots.add(player as Bot, 0.3 + game.rng.next() * 0.5);
       if (running && match.phase === 'playing') spawn(game, f);
       if (!player.bot) {
-        if (running) loadoutMenu(game, f);
+        // (Between matches: the vote on what's next; the loadout comes with the next match.)
+        if (running && match.phase === 'playing') loadoutMenu(game, f);
+        next.offer(player);
         balanceBots(game);
         game.hud.feed([{ text: player.name, color: nameColor(player, COLORS.gold) }, ` rolled into ${match.map.name}`]);
         // One more to count in a vote to skip.
@@ -912,7 +937,8 @@ export default defineServer(shared, {
       boardDirty = true;
       if (f && isCase()) rounds.left(f);
       if (!player.bot) balanceBots(game);
-      // Their vote to skip goes, and the rest are counted again (last: it may end the match).
+      // Their votes go, and the rest are counted again (last: a vote to skip may end the match).
+      next.left(player);
       vote.left(player);
     });
     game.events.on('playerDeath', ({ player, source, weapon, headshot, through }) => onDeath(game, player, source, weapon, !!headshot, through ?? 0));
@@ -1006,8 +1032,10 @@ export default defineServer(shared, {
     running = true;
     match.phase = 'playing';
     skipped = false;
-    // A new match: no votes to skip it yet (they open a few seconds in).
+    // A new match: no votes to skip it yet (they open a few seconds in), and none on what's next.
     vote.reset();
+    next.close();
+    voteNext = false;
     // The match planned: its mode, its map (the bots' grid and hotspots with it).
     match.mode = MODES[plan.mode];
     match.map = mapById(plan.map) ?? MAPS[0];
@@ -1066,17 +1094,29 @@ export default defineServer(shared, {
     streaks.update(dt);
     // The vote to skip (V), people's only: a vote that carries it ends the match here.
     for (const p of game.players) {
-      if (p.bot || !p.input.pressed('KeyV')) continue;
+      if (p.bot || !p.input.pressed('KeyV', { dead: true })) continue;
       const no = vote.toggle(p);
       if (no) p.hud.toast(no);
     }
 
     if (match.phase === 'over') {
-      if (now - overAt > INTERMISSION) game.restart();
+      const since = now - overAt;
+      // The scores seen: what's next is voted on (nextvote.ts), till the intermission's out.
+      if (voteNext && since >= SCORES) {
+        voteNext = false;
+        next.begin(plan, intermission - since);
+      }
+      if (since > intermission) {
+        if (next.open) plan = next.end();
+        game.restart();
+        return;
+      }
+      for (const p of next.people()) if (p.input.pressed('KeyM', { dead: true })) matchMenu(game, p);
       // (A match skipped has no final scores to show: its banner says what's next.)
-      else if (!skipped && Math.floor(now) !== lastSecond) {
+      if (!skipped && Math.floor(now) !== lastSecond) {
         lastSecond = Math.floor(now);
         scoreboard(game, true);
+        next.tick();
       }
       return;
     }
@@ -1084,7 +1124,7 @@ export default defineServer(shared, {
     // Respawns (not in The Briefcase: the down watch a teammate), streak timers, the edge of the map.
     for (const f of fighters.values()) {
       const p = f.player;
-      if (!p.bot && p.input.pressed('KeyM')) matchMenu(game, p);
+      if (!p.bot && p.input.pressed('KeyM', { dead: true })) matchMenu(game, p);
       if (!p.alive) {
         if (f.diedAt < 0) f.diedAt = now;
         // KILLCAM hook (killcam.ts): the respawn (or the round's spectating) waits for the kill cam.

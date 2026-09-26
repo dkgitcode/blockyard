@@ -429,10 +429,16 @@ if (s.left > 0) {
 - While it's on, the wheel zooms rather than changing hotbar slots; the number keys still select slots.
 - `orbit(null)` puts them back in first person. Skyship turns it on at the helm: `p.camera.orbit(ship, { offset: { x: 0.5, y: 8, z: -2 }, max: 70 })`.
 
-**A third-person shooter.** Circling a player straight behind their eyes, their own head sits in the middle of the screen. `shoulder: { right, up }` moves the camera that far across and up the view from there (short of a wall), so their figure stands to one side and the middle of the screen is clear. Their eyes aren't on the camera's line any more, so their aim converges: each frame their screen finds the first block or body under the middle of the screen (at least a couple of blocks past their eyes) and turns their look from their eyes to it. That look is what their controls send, so whatever aims by it (guns and their lag compensation, throws, blades, `player.look`, their figure's head) goes where the crosshair is, online as well. `wheel: false` keeps the mouse wheel for the hotbar and the camera at `distance` (give `min` and `max` the same to hold it there). Blockfront plays over the shoulder, and V goes through the eyes and back:
+**A third-person shooter.** Circling a player straight behind their eyes, their own head sits in the middle of the screen. `shoulder: { right, up }` moves the camera that far across and up the view from there, so their figure stands to one side and the middle of the screen is clear. How it behaves:
+- **Where they look** is the camera's: the mouse turns it, and that's what their controls send (where they walk and face, their figure's head, `player.look`), so walking is always straight ahead of the camera.
+- **Where they shoot** converges on the crosshair: their eyes aren't on the camera's line, so a shot or a throw made on their screen (an item kit's `controls`: `c.yaw` / `c.pitch`) goes from their eyes to the first thing under the middle of the screen: someone's figure as it's drawn, or a block from a couple of blocks past their eyes on (cover right in front of them is what their own shot meets anyway). It's worked out at the moment they fire, so what they hit is what the crosshair is on, online too (the host takes each shot's own direction).
+- **The camera's arm** stops short of what's between it and them, probed by several rays a little apart (a wall stops them all; a post, a pole or a fence's bar only one or two, and doesn't pull it in), and it pulls in quickly and lets out slowly, so corners and doorways don't jerk it. Blocks are met as they really are (a slab, a fence where its bars are).
+- **Up close** (their back to a wall), their own figure fades (dithered), so it doesn't fill the view.
+
+`wheel: false` keeps the mouse wheel for the hotbar and the camera at `distance` (give `min` and `max` the same to hold it there). Blockfront plays over the shoulder, and V goes through the eyes and back:
 
 ```ts
-p.camera.orbit(p, { distance: 3.6, min: 3.6, max: 3.6, shoulder: { right: 0.95, up: 0.42 }, wheel: false });
+p.camera.orbit(p, { distance: 3.3, min: 3.3, max: 3.3, shoulder: { right: 0.65, up: 0.5 }, wheel: false });
 ```
 
 ## Players and multiplayer
@@ -954,7 +960,7 @@ export const shared = defineShared({
 
 **Without a vehicle**, drive the camera yourself: `game.camera.set(position, lookAt, up?)` or `setPose(position, quaternion)`, plus `fov`. On a server that camera arrives a round trip late, which is why anything the player steers should be a vehicle.
 
-- **Input:** `game.input.isDown('KeyW')`, `pressed(code)`, `button(0)`, `buttonPressed(2)`, and `mouseX` / `mouseY` / `wheel` deltas while the mouse is captured. A controller's buttons press keys and mouse buttons, and its right stick moves the mouse (see Controllers), so a vehicle steered by the mouse steers with the stick too. Everything reads as idle while paused, so games never need to check. `consume(button | key)` claims an input for the rest of the frame, so the built-in systems (which run after your `update`) ignore it.
+- **Input:** `game.input.isDown('KeyW')`, `pressed(code)`, `button(0)`, `buttonPressed(2)`, and `mouseX` / `mouseY` / `wheel` deltas while the mouse is captured. A controller's buttons press keys and mouse buttons, and its right stick moves the mouse (see Controllers), so a vehicle steered by the mouse steers with the stick too. Everything reads as idle while paused (or a menu's open, or they're typing in chat), so games never need to check, and while the player's dead; `pressed(code, { dead: true })` hears a dead player's keys too, for a vote or a menu they can still use. `consume(button | key)` claims an input for the rest of the frame, so the built-in systems (which run after your `update`) ignore it.
 - **Math:** `import { math } from '@platform'` gives `Vector3`, `Quaternion`, `Euler`, `Matrix4` and `MathUtils`.
 - **Props** are movable objects:
   - `props.model(blueprint, { scale, pivot })` meshes a Blueprint once. The mesh uses the world's block textures, with ambient occlusion, sun shadows and glowing blocks. At `scale: 0.25`, each block is a quarter metre, which is how the Starfighter builds detailed X-wings.
@@ -1219,7 +1225,7 @@ game.commands.run('/give pike'); // run one from code
 | `hud.progress(0..1, { color })` | A ring round the crosshair (mining, charging, capturing) |
 | `hud.feed(text, { color })` | A line in the message feed at the top left (kill feeds, match events); lines stack and fade |
 | `hud.screen({ title, tone, stats, buttons })` | Modal victory / defeat / menu |
-| `hud.menu({ title, subtitle, sections: [{ title, entries }] })` | A panel of clickable entries (shops, upgrades, level select) while the game keeps running. Entries take an `icon` (a sprite, `{ block }`, or `{ item: 'rifle', view: 'side' }`: the item's own icon, as each screen has it), `label`, `detail` (a price), `note`, `disabled`, `active` and `onSelect`; `update()` refreshes it after a purchase. Esc or E closes it |
+| `hud.menu({ title, subtitle, sections: [{ title, entries }] })` | A panel of clickable entries (shops, upgrades, level select) while the game keeps running. Entries take an `icon` (a sprite, `{ block }`, or `{ item: 'rifle', view: 'side' }`: the item's own icon, as each screen has it), `label`, `detail` (a price), `note`, `disabled`, `active` and `onSelect`; `update()` refreshes it after a purchase (a new `title` or `subtitle` alone, a countdown say, leaves the entries as they are; a click on the entries as they were just before an update still counts). Esc or E closes it |
 | `hud.meter`, `marker`, `radar`, `crosshair` | Vehicle HUD (see above); markers and radar blips can follow props, entities and players; a marker's `bar` draws a bar under its label |
 | `hud.pop(text, { big, sub, color })` | A short pop-up under the crosshair ("+100", "Headshot", "Double kill") |
 | `hud.scoreboard({ title, columns, rows, footer, show })` | The scoreboard players see while holding Tab (or kept up with `show`); a row naming a `player` is highlighted on their screen |

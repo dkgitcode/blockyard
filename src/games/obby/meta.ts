@@ -1,4 +1,5 @@
 import { defineMeta } from '@platform';
+import cover from './cover.webp?url';
 
 /**
  * Sky Obby: a parkour course of ten stages floating in the sky, from stepping stones to lava,
@@ -9,6 +10,7 @@ export default defineMeta({
   title: 'Sky Obby',
   tagline: 'Ten stages of parkour in the sky. Race the clock, or your friends.',
   accent: '#ffd36b',
+  cover,
   controls: [
     ['Ctrl', 'sprint'],
     ['Shift', 'sneak: don’t fall off edges'],

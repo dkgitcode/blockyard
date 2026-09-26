@@ -6,7 +6,7 @@ Every game is played on a game server: its rules run there, and each player's br
 
 | File | Made with | Runs | What goes in it |
 | --- | --- | --- | --- |
-| `meta.ts` | `defineMeta` | the launcher, and both sides | what the home page lists: `id`, `title`, `tagline`, `accent`, `controls`, `gamepad`, `instances`. Tiny, and it imports nothing but `@platform` |
+| `meta.ts` | `defineMeta` | the launcher, and both sides | what the home page lists: `id`, `title`, `tagline`, `accent`, `cover`, `controls`, `gamepad`, `instances`. Tiny, and it imports nothing but `@platform` (and its cover picture, by URL) |
 | `shared.ts` | `defineShared` | the server and every screen | what both sides must agree on: `world` (terrain, `structures`, `terraform`, `destructible`), `blocks` and their painters, `player` (movement, abilities, hotbar, skin, model), `guns`, `vehicles`, `hud`, `cheats`. Data, and pure functions both run the same way (structure builders, block painters, vehicles' and abilities' steps). It starts from the meta: `defineShared({ ...meta, world: { ... } })` |
 | `server.ts` | `defineServer(shared, { setup, start, update })` | the server only | the rules: items and entities, events, bots, scoring, the HUD calls. Never sent to a browser |
 | `client.ts` | `defineClient(shared, { ... })` (`@platform/client`) | each player's screen only | what the screen does of its own: the kits it uses (`@platform/client/kits`), and its own code (see "Client code") |
@@ -56,6 +56,7 @@ src/games/
     modes.ts            the modes (free-for-all, Team Deathmatch, The Briefcase), the teams, the rotation
     match.ts            the match as the server's parts share it: the fighters, the mode, the map, the score
     briefcase.ts        The Briefcase's rounds: planting and cracking the case, one life a round, the bots' roles
+    skipvote.ts         the vote to skip the match that's on (V): people only, more than half of them skips it
     shared.ts           the maps, movement, the fighters' models, the HUD theme, its own blocks (blocks.ts)
     weapons.ts          what the guns (kind 'gun'), the katana and the lethals (kind 'throwable') do
     client.ts           the kits it uses, listed; its looks and voices (client/)
@@ -66,7 +67,7 @@ src/games/
                         Big Kahuna Burger (a burger joint, its lot, a motel round a drained pool), as Blueprints
     models/             the guns and fighters as GLB files (tools/ writes them; the guns reached only by client code)
     art.ts              the pulp wardrobe (skins painted in code)
-    hud.css hud.ts      its HUD: the comic-book theme (hud.theme.css), its corner widget, the team modes' bar
+    hud.css hud.ts      its HUD: the comic-book theme (hud.theme.css), its corner widget, the team modes' bar, the vote's card
     progression.ts      XP, levels 1 to 30 and what they unlock, kept by name (game.store); the loadout's locks
     client/progression.ts  the XP bar, the ticker of gains, level-ups and the match's XP: a client kit of its own
   blockfront/           Blockfront II: Rebels against the Empire, third person, over the command posts of a desert spaceport
@@ -95,6 +96,8 @@ import { defineMeta } from '@platform';
 
 export default defineMeta({ id: 'heart-hunt', title: 'Heart Hunt', tagline: 'A gentle hunt for ten hidden hearts', accent: '#ff5a7a' });
 ```
+
+The home page shows the game on show large, with its `tagline`, over its world, and a card for every game along the bottom, in its `accent` colour. A card shows the game's `cover` if it has one: a 16:9 shot of the game (about 960×540, a WebP or JPEG under 100 KB) with no HUD or title on it, imported by URL (`import cover from './cover.webp?url'`, then `cover` in the meta). The same picture, blurred, fills the page while the game's world loads. The first few `controls` show under Play (the rest on asking), and the pause menu lists them all under How to play.
 
 The world and the player, which the server and every screen read (`shared.ts`):
 
@@ -455,11 +458,11 @@ http://localhost:5173/?server=ws://localhost:8787&game=sandbox
 
 With no games named, a server hosts every game in the launcher. Development games (the ones behind `?game=` alone, like High Noon, `moves` or the previews) are hosted only by a server in development mode (`npm run dev`, or `npm run server -- --dev`).
 
-The server runs the game at 30 steps a second whether or not anyone's watching a given frame. The first to join is `game.player`; everyone else arrives at the spawn and the game hears `playerJoin`. When the first player leaves, the next to join takes their place, so `game.player` always works. Everyone sees everyone else as a figure with their name above it, wearing the game's player skin (or their own, `player.setSkin`). Your own movement is predicted: it happens the moment you press a key, and the server's word only corrects it when something you couldn't know about happened (a knockback, a teleport). A restart (from any player's pause menu or a "Play again" button) restarts the game for everyone. `game.exit()` sends back to the launcher only the player whose button or command called it.
+The server runs the game at 30 steps a second whether or not anyone's watching a given frame. The first to join is `game.player`; everyone else arrives at the spawn and the game hears `playerJoin`. When the first player leaves, the next to join takes their place, so `game.player` always works. Everyone sees everyone else as a figure with their name above it, wearing the game's player skin (or their own, `player.setSkin`). Your own movement is predicted: it happens the moment you press a key, and the server's word only corrects it when something you couldn't know about happened (a knockback, a teleport). A restart (a "Play again" button, or Restart match in the pause menu) restarts the game for everyone. Players can restart the game or change its time of day from the pause menu only in a game of their own: in the public game, which is everyone's, the server turns both down (unless it runs with `--cheats`, as development servers do). `game.exit()` sends back to the launcher only the player whose button or command called it.
 
 **What a server keeps.** Each server has a SQLite database (`data/<game>.sqlite`, or `--db path`). It holds the world's seed, so restarting the server carries on the same world; for games that keep their world (`world.persist`, like Sandbox) its builds and time of day, and each player's place by name (where they stood, which way they faced, whether they were flying, their block hotbar); and your game's `game.store`. It's saved every 30 seconds, when a game stops for want of players, and when the server stops (Ctrl-C). `--new` starts a fresh world and sets the old database aside. Names aren't checked yet: whoever joins as Ann gets Ann's place, and a second Ann at the same time becomes "Ann 2".
 
-**Games of one's own.** A match game can let players start a game of their own instead of joining the public one: set `instances: true` on the game (Bed Wars, the Arena and Starfighter do). Its home page on a server then has a second button, "Play on your own". It opens a separate copy of the game (its own world, its own match, the bots filling the empty places) at an address of its own (`?game=bedwars&room=k3x9f2`); "Copy invite link" hands that address to friends, and "Public game" goes back. Such a game keeps no world or places, but it shares the game's `game.store` with the public one, so all-time numbers count wherever they were earned. It stops a minute after the last player leaves. Each game on a server runs in a worker thread of its own, so the variables your game keeps in its module are its own in each copy; leave `instances` off for games that are one shared world (Sandbox). A server runs up to 8 games at once (`--rooms`, about 30 to 50 MB each), and one address may have 2 of its own going. A game knows which it is from `game.room`: `'public'`, or the room's code. Call of Blocky's public room goes round its modes and maps match by match, while in a room of one's own the players pick them (a menu on M).
+**Games of one's own.** A match game can let players start a game of their own instead of joining the public one: set `instances: true` on the game (Bed Wars, the Arena and Starfighter do). Its home page on a server then offers "Start a private game" under Play. It opens a separate copy of the game (its own world, its own match, the bots filling the empty places) at an address of its own (`?game=bedwars&room=k3x9f2`); "Copy invite link" (or Invite friends in the pause menu) hands that address to friends, and "Back to the public game" goes back. Such a game keeps no world or places, but it shares the game's `game.store` with the public one, so all-time numbers count wherever they were earned. It stops a minute after the last player leaves. Each game on a server runs in a worker thread of its own, so the variables your game keeps in its module are its own in each copy; leave `instances` off for games that are one shared world (Sandbox). A server runs up to 8 games at once (`--rooms`, about 30 to 50 MB each), and one address may have 2 of its own going. A game knows which it is from `game.room`: `'public'`, or the room's code. Call of Blocky's public room goes round its modes and maps match by match, while in a room of one's own the players pick them (a menu on M); in either, the people playing can vote to skip the match that's on (V, or `/skip`: more than half of them, bots not counted, and the next is on).
 
 How a game written for one player behaves with company depends on how it's written: a game that only talks to `game.player` gives the others a world to walk around in, while one that uses `game.players`, `player.hud` and the named player in callbacks works for everyone.
 
@@ -483,7 +486,7 @@ export default defineServer(shared, {
 });
 ```
 
-The platform knows no kinds itself: an item whose kind isn't listed is carried, dropped and given, and does nothing else (a `misc` item). The kits above are the platform's own, written against the public API alone (`ItemKind`, `ItemHost`, `ItemUse` in `@platform`), so a game can copy one into its folder and change it, or write a kind of its own: a kit is a function the game's host calls with the running game's `ItemHost` for a fresh `ItemKind`, whose `step` runs for every player every step (the controls, the held item, lag-compensated `hitscan`, `swing`, and messages to screens), whose `move` slows a holder, and whose `state` keeps each carried item's (a gun's rounds, `inventory.state(item)`). A kind whose client half runs ahead on the holder's screen (a gun's shots, a throw) gets that screen's actions in `use.acts`, and takes each that could have happened. Game code reaches a running kit with `game.items.kind('gun')`; the platform's have typed helpers: `guns.of(game)`, `throwables.of(game)`.
+The platform knows no kinds itself: an item whose kind isn't listed is carried, dropped and given, and does nothing else (a `misc` item). An item's own fields are its kind's: their types are the kits' (`GunItem`, `ThrowableItem`, `MeleeItem`, `BowItem`, `ConsumableItem` in `@platform/items`, with guards: `isGun(def)`), so type a definition with its kit's (`{ kind: 'gun', … } satisfies GunItem`) to have its fields checked. The kits above are the platform's own, written against the public API alone (`ItemKind`, `ItemHost`, `ItemUse` in `@platform`), so a game can copy one into its folder and change it, or write a kind of its own: a kit is a function the game's host calls with the running game's `ItemHost` for a fresh `ItemKind`, whose `step` runs for every player every step (the controls, the held item, lag-compensated `hitscan`, `swing`, and messages to screens), whose `move` slows a holder, and whose `state` keeps each carried item's (a gun's rounds, `inventory.state(item)`). A kind whose client half runs ahead on the holder's screen (a gun's shots, a throw) gets that screen's actions in `use.acts`, and takes each that could have happened. Game code reaches a running kit with `game.items.kind('gun')`; the platform's have typed helpers: `guns.of(game)`, `throwables.of(game)`.
 
 The platform's kits implement everything around them:
 - **Melee** (`melee()`): swing animation, hit detection through walls, knockback, crits while falling, and sweep attacks. It's also the bare fist: the fire button swings with nothing in hand, or anything whose kind doesn't take the mouse buttons (`melee({ fist: false })` for none).
@@ -571,10 +574,17 @@ gun: {
 
 **Iron sights.** Aiming, the gun turns to point dead ahead and its `sight` point goes on the eye line, `ads` blocks ahead (iron sights 0.42 by default). The eye line then runs along the gun's own +z through the `sight` point, so model the sights on that line: the front post's tip at the `sight` point's height, the rear sight's notch open down to it, and put `sight` at the rear sight (or the front post). Nothing behind the `sight` point, between it and the eye (a hammer, the top of a receiver, a stock's comb), may rise above the line: it's drawn nearer the eye than the sights, and covers what they point at. The hands and arms are below the line too: a support hand far along the gun sits under the sights, and a firing hand close to the eye (a rifle whose sight is well ahead of its grip, with a short `ads`) looms large at the bottom of the view; a longer `ads` moves the whole gun away.
 
-**A game's gun rules.** The gun kit's options set how every gun plays. The host and each shooter's own screen both play by them (a screen predicts its own movement and fires its own shots), so they're data in the shared definition, handed to the kit on the host (`guns(shared.guns)`). Where bullets meet players is the platform's (`hitscan`: any kit's bullets use it). The defaults are Call of Blocky's:
+**A game's gun rules.** The gun kit's options set how every gun plays. The host and each shooter's own screen both play by them (a screen predicts its own movement and fires its own shots), so a game keeps them in its shared code and hands the same ones to both halves: `guns(GUN_RULES)` in `server.ts`, `items.guns(GUN_RULES)` in `client.ts` (High Noon's are in its `shared.ts`). Where bullets meet players is the platform's (`hitscan`, in the shared definition: any kit's bullets use it). The defaults are Call of Blocky's:
 
 ```ts
-defineShared({
+export const GUN_RULES: GunOptions = {
+  aimSlows: true,                          // aiming slows to the gun's aim.move
+  aimStopsSprint: true, fireStopsSprint: true,
+  autoReload: true,                        // an empty gun reloads by itself
+  rateSlack: 3,                            // shots a laggy screen may get ahead of the gun's rate (at least 1)
+  assist: { strength: 0.6, cone: { radius: 1.1, angle: 1.43 }, slow: { hip: 0.45, aim: 0.6 }, follow: { hip: 0.4, aim: 0.6 } },
+};
+export const shared = defineShared({
   hitscan: {
     rewind: 0.35,                          // seconds a shot may look back for where its target was
     hitboxes: {                            // players' boxes for bullets, blocks up from the feet; give what you change
@@ -582,13 +592,6 @@ defineShared({
       crouch: { height: 1.7, neck: 1.2, width: 0.76, headWidth: 0.6 },
       slide: { height: 1.4, neck: 0.85, width: 0.9, headWidth: 0.9 },
     },
-  },
-  guns: {
-    aimSlows: true,                        // aiming slows to the gun's aim.move
-    aimStopsSprint: true, fireStopsSprint: true,
-    autoReload: true,                      // an empty gun reloads by itself
-    rateSlack: 3,                          // shots a laggy screen may get ahead of the gun's rate (at least 1)
-    assist: { strength: 0.6, cone: { radius: 1.1, angle: 1.43 }, slow: { hip: 0.45, aim: 0.6 }, follow: { hip: 0.4, aim: 0.6 } },
   },
 });
 ```
@@ -631,7 +634,7 @@ player.inventory.give('frag', 2);
 
 ## Controllers
 
-Every game plays with a controller as well as the keyboard and mouse, with nothing to write: a controller presses the same keys and mouse buttons, so `input.isDown('KeyR')` and `button(0)` read it too. The left stick walks, the way it points and as fast as it's pushed (it also holds WASD, for games that read those), and the right stick looks, turning faster the longer it's held all the way over and slower aiming down the sights. Play and Resume pressed with the controller give it the game (no mouse capture needed); Menu pauses. In the menus (the home page, pause, `hud.menu`, `hud.screen`, the block picker) the D-pad or stick moves a highlight, A presses, B backs out, and sliders slide with left and right. With a gun there's aim assist: over a player in sight the stick turns slower, and while the sticks move the view turns a little with them as they move. The strength is the gun's `aim.assist` (0 to 1, default 0.6). It can give the shape too, as can the game's `guns.assist` for every gun: `cone` (who's near enough the crosshair: `radius` blocks round them, 1.1, plus `angle` degrees, about 1.43), `slow` (how much the stick slows over them at full strength, from the hip and aiming: 0.45 and 0.6) and `follow` (how much of their movement the view turns with: 0.4 and 0.6). Only controllers get it, never a mouse, and each player can turn it off, along with stick sensitivity, invert look and vibration, in the pause menu. The controller rumbles as guns fire and when you're hurt.
+Every game plays with a controller as well as the keyboard and mouse, with nothing to write: a controller presses the same keys and mouse buttons, so `input.isDown('KeyR')` and `button(0)` read it too. The left stick walks, the way it points and as fast as it's pushed (it also holds WASD, for games that read those), and the right stick looks, turning faster the longer it's held all the way over and slower aiming down the sights. Play and Resume pressed with the controller give it the game (no mouse capture needed); Menu pauses. In the menus (the home page, pause, `hud.menu`, `hud.screen`, the block picker) the D-pad or stick moves a highlight, A presses, B backs out, and sliders slide with left and right. With a gun there's aim assist: over a player in sight the stick turns slower, and while the sticks move the view turns a little with them as they move. The strength is the gun's `aim.assist` (0 to 1, default 0.6). It can give the shape too, as can the gun rules' `assist` for every gun: `cone` (who's near enough the crosshair: `radius` blocks round them, 1.1, plus `angle` degrees, about 1.43), `slow` (how much the stick slows over them at full strength, from the hip and aiming: 0.45 and 0.6) and `follow` (how much of their movement the view turns with: 0.4 and 0.6). Only controllers get it, never a mouse, and each player can turn it off, along with stick sensitivity, invert look and vibration, in the pause menu. The controller rumbles as guns fire and when you're hurt.
 
 The platform's layout is a shooter's, and it suits building too:
 
@@ -847,7 +850,7 @@ None of the above is the engine's. The engine draws a **first-person layer** and
 in it; everything this section describes (the styles, the Minecraft transforms, guns' poses,
 reloads and actions, the kick and the flash, the bob and the sway, the arms fitted to what's
 held) is a client kit, `firstPerson.standard()` from `@platform/client/kits`, written only against
-the public client API. Every game lists it (`standardKits()` includes it). A game that wants its
+the public client API. Every game lists it. A game that wants its
 first person another way copies the kit and changes the copy.
 
 **The view layer (`client.view`).** Drawn over the world with its own lens (its space is the
@@ -947,6 +950,7 @@ export const shared = defineShared({
 - The state is plain data (numbers, booleans, short lists): it goes to the pilot's screen as is. Anything with consequences (shots, damage, sounds) is your `update`'s job, reading `player.vehicle.state` and `player.input`; the game may change the state too (a knock-back), and the pilot's screen catches up smoothly.
 - `step` must be pure and the same everywhere: the host and the pilot's screen run it on the same inputs and the same blocks, and the pilot's screen starts again from the host's state whenever it arrives. `world` offers `raycast`, `getBlock`, `blockName`, `lineOfSight`, `surfaceY` and `seaLevel`.
 - While driving, their body goes with the vehicle (so `player.position` is the vehicle's), and a walking player's figure is hidden. `player.camera.set(...)` takes the camera over (a cutscene, watching after being shot down); `player.camera.follow()` gives it back. `player.leaveVehicle()` gets out.
+- **Steered from afar**: `drive(name, state, { prop, remote: true })` is a guided missile, a drone, a turret's camera: their controls and camera go to the vehicle, but their body stays where it stood, frozen, and everyone still sees it there (it can be shot; markers and orbits that follow the player stay on the body). Lock their weapons while they fly (`freeze(true, { weapons: true })`), or a click fires their gun as well. Call of Blocky's Hellstorm and attack chopper are two (`src/games/callofblocky/streaks/`).
 
 **Without a vehicle**, drive the camera yourself: `game.camera.set(position, lookAt, up?)` or `setPose(position, quaternion)`, plus `fov`. On a server that camera arrives a round trip late, which is why anything the player steers should be a vehicle.
 
@@ -962,7 +966,7 @@ export const shared = defineShared({
 **HUD for vehicles:**
 - `hud.meter(id, label, 0..1, { color })` draws a bar (shields, boost).
 - `hud.marker(id, at, { shape: 'box' | 'diamond' | 'ring' | 'reticle' | 'dot', color, size, label, edge, pulse, offset })` draws target brackets and waypoints. `at` is a spot, or something to follow: a prop, an entity or a player, placed by each screen every frame where it draws it (and sent only once). `offset` is in a prop's own space: `{ z: -30 }` is a reticle 30 blocks ahead of a ship's nose. With `edge`, off-screen targets become arrows on the screen edge; `size: { world: n }` scales the marker with distance.
-- `hud.radar({ center, heading?, range, blips })` draws a round radar; `center` and each blip's `at` can follow things too, and centred on a prop it turns with it.
+- `hud.radar({ center, heading?, range, blips, at? })` draws a round radar, bottom right; `center` and each blip's `at` can follow things too, and centred on a prop it turns with it. `at: 'top-right'` (any widget place) puts it there instead, under the game's widgets in that place.
 - `hud.crosshair(false)` hides the default crosshair.
 
 **Effects and sound:**
@@ -1068,7 +1072,7 @@ game.items.define('cutlass', {
 - Others see each player as the model, walking, running, swinging and holding what's in their hand at the model's `hand` node; `player.setModel(model)` gives one player their own (null: back to the game's). With a `hand` node, the player's own first-person arm is that part of the model.
 - A held model should run along +z to its tip with its handle near the origin, like the built-in ones; `rotation` (degrees about X, Y, Z) and `scale` fix one that doesn't, and `grip` is the point in the fist (in pixels, a sixteenth of a block). It's drawn in first person with the item's hold style (`sword`, `axe`, …), in other players' hands, and lying on the ground.
 - `icon: { gltf: url }` draws the item's icon from the model (a small picture from above and to the side, like an inventory's); an item whose icon is a model and has no `hold.model` is held as that model.
-- **Humanoids.** A figure built on the platform's humanoid rig needs no animations. The rig is a joint per part named `hips`, `spine`, `chest`, `neck`, `head`, `upperArmR`, `lowerArmR`, `handR` and so on, with `gripR` and `gripL` marking where the fists hold (`docs/HUMANOID.md` has the joints and the rest pose). The figures kit (`figures.humanoid()`, which every game lists, alone or in `standardKits()`; see *Figures* below) animates it in code from what it's doing:
+- **Humanoids.** A figure built on the platform's humanoid rig needs no animations. The rig is a joint per part named `hips`, `spine`, `chest`, `neck`, `head`, `upperArmR`, `lowerArmR`, `handR` and so on, with `gripR` and `gripL` marking where the fists hold (`docs/HUMANOID.md` has the joints and the rest pose). The figures kit (`figures.humanoid()`, which every game lists; see *Figures* below) animates it in code from what it's doing:
   - Its feet stay planted and step the way it's going, walking, running, strafing or backpedalling, and its legs bend to reach them.
   - It crouches, slides, jumps and looks.
   - It holds a gun in both hands, aimed where it looks, with its fists on the gun's `grip` and `grip2`. It carries the gun low across its chest to sprint, tips it to reload while the support hand fetches a magazine, kicks with each shot, and works a `lever` or a `hammer`. A gun held in one hand (`hold.gun.hands: 1`) leaves the other free, in its stance's `offHand` pose, until a reload brings it to the gun.
@@ -1091,7 +1095,7 @@ it places each figure and keeps what it's doing, loads what's in its hand and ha
 hand, maps the humanoid rig's joints onto the model's own skeleton, and plays the model's clips
 over the pose. It never decides how anything is held: a figures kit does.
 
-- **The kit.** `figures.humanoid()` (`@platform/client/kits`, in `standardKits()`) poses every
+- **The kit.** `figures.humanoid()` (`@platform/client/kits`) poses every
   figure on the humanoid rig as the platform always has: the gait, crouching and sliding, the
   look, a gun aimed in both hands (rifle or pistol by its length, `hold.stance` or `pistolUnder`),
   one hand free on a one-handed gun, the kick, the sprint carry, the reload, a `lever` or a
@@ -1245,7 +1249,7 @@ hud: {
 },
 ```
 
-**A stylesheet of the game's own.** `theme.css` restyles the platform's HUD by its classes: `.stat`, `.objective`, `.banner-title`, `.hud-pop-text`, `.feed-line`, `.scoreboard` and `.sb-table`, `.healthbar-track`, `.hotbar` and `.slot`, `.menu-card` and `.menu-entry`, `.result-card`, the HUD kits' pieces (`.ammo-mag`, `.ammo-pip`, `.gun-cross span`, `.throwable`), and the rest (find them with the browser's inspector). The platform keeps it to the HUD, the menus, the result screens and the game's widgets (the home page and pause menu stay the platform's), and each rule counts one class more than written, so `.stat { … }` beats the platform's own `.stat`. The `colors` above are there as `var(--hud-ink)`, `--hud-paper`, `--hud-accent`, `--hud-fg`, `--hud-danger` and `--hud-good`, the fonts as `var(--pixel)` (display) and `var(--sans)`. Call of Blocky's comic-book look (ink outlines, hard shadows, paper panels) is all in `src/games/callofblocky/hud.css`: copy it to start from. Left out: `@import`, `@font-face` (use `fonts`), pictures from other sites (`url()` takes `data:` images and files on this site), and anything that could run code.
+**A stylesheet of the game's own.** `theme.css` restyles the platform's HUD by its classes: `.stat`, `.objective`, `.banner-title`, `.hud-pop-text`, `.feed-line`, `.scoreboard` and `.sb-table`, `.healthbar-track`, `.hotbar` and `.slot`, `.menu-card` and `.menu-entry`, `.result-card`, the HUD kits' pieces (`.ammo-mag`, `.ammo-pip`, `.gun-cross span`, `.throwable`), and the rest (find them with the browser's inspector). The platform keeps it to the HUD, the menus, the result screens and the game's widgets (the home page and pause menu stay the platform's, though the pause menu writes the game's name in its `display` face), and each rule counts one class more than written, so `.stat { … }` beats the platform's own `.stat`. The `colors` above are there as `var(--hud-ink)`, `--hud-paper`, `--hud-accent`, `--hud-fg`, `--hud-danger` and `--hud-good`, the fonts as `var(--pixel)` (display) and `var(--sans)`. Call of Blocky's comic-book look (ink outlines, hard shadows, paper panels) is all in `src/games/callofblocky/hud.css`: copy it to start from. Left out: `@import`, `@font-face` (use `fonts`), pictures from other sites (`url()` takes `data:` images and files on this site), and anything that could run code.
 
 **Widgets of your own.** When the built-in pieces aren't what a game needs, it makes its own from HTML and CSS, filled in from data. Define it once, then put it up on everyone's screens (`game.hud.widget`) or one player's (`player.hud.widget`) with its data. Call `widget` again whenever you like (every tick is fine): only what changed reaches the screens, as a small patch, and a player who joins late gets what's up now. Heart Hunt's row of hearts:
 
@@ -1299,21 +1303,32 @@ They work wherever a name does, beside the widget's own data: `{{$gun.mag}}`, `d
 
 **Safe to show.** A widget's markup and CSS come from the game's code, which may run on a server someone else runs, so each player's screen checks them again and builds them element by element (never as HTML). Left out: `<script>`, `<style>`, frames, forms and fields, SVG, links; `on…` attributes, `id`, `name` and `href`; pictures and `url()` except `data:` images and files on this site; CSS other than style rules, `@media`, `@supports`, `@container` and `@keyframes`, and values that load from elsewhere or could run code. `hud.define` says in the console what it left out. Data is only ever text.
 
-Call of Blocky's corner of the screen (kills, place, the leader, the streak toward the UAV and the Adrenaline Shot, their timers) is a widget: `src/games/callofblocky/hud.ts`.
+Call of Blocky's corner of the screen (kills, place, the leader, the streak toward the UAV, the Adrenaline Shot, the Hellstorm and the Attack Chopper, their timers, and a streak ready to call in) is a widget: `src/games/callofblocky/hud.ts`.
 
 ## Client code: HUD, effects, sounds and messages
 
 A game's `client.ts` runs on each player's screen (`defineClient(shared, { kits, setup, frame, late })`, `@platform/client`). What the platform's games have always shown is built from the public client API as **kits** (`@platform/client/kits`), which a game lists, copies into its own folder and changes, or replaces. A game lists the kits it uses, in the order they run; Call of Blocky's:
 
 ```ts
-import { effects, figures, firstPerson, hud, sounds } from '@platform/client/kits';
+import { effects, figures, firstPerson, hud, items, sounds } from '@platform/client/kits';
 defineClient(shared, {
-  kits: [...sounds.standard(), ...firstPerson.standard(), figures.humanoid(), hud.gunner(), hud.throwables(), effects.gunfire(), effects.throwables()],
+  kits: [items.throwables(), items.guns(), ...sounds.standard(), ...firstPerson.standard(), figures.humanoid(), hud.gunner(), hud.throwables(), effects.gunfire(), effects.throwables()],
   setup(client) { defineLooks(client); defineSounds(client); },   // client/looks.ts, client/sounds.ts
 });
 ```
 
-(`standardKits()` is all of them, as the games that haven't listed theirs yet use.) Each frame the kits' `frame` runs in order, then the game's; then the world's effects move on by the frame's time; then the kits' and the game's `late` (for what's made at the very end, drawn where it starts: a shot fired this frame).
+Each frame the kits' `frame` runs in order, then the game's; then the world's effects move on by the frame's time; then the kits' and the game's `late` (for what's made at the very end, drawn where it starts: a shot fired this frame). An event a kit emits (`client.emit`) reaches the kits after it, and the game's code, that same frame.
+
+**Item kits' screen halves.** `items.guns(options)` and `items.throwables()` are the client halves of the gun and throwable kits (see "Items"), with the same options as their host halves: they fire and throw on this screen the moment the controls say so, and send what they did to the host with the controls; everything that shows it (first person, the HUD, effects) reads them. List them first, throwables before guns (a throwable being cooked takes the fire button). A kind of item of a game's own gets a client half the same way: a kit with a `kind`, whose hooks are:
+- `controls(client, c, dt)`: before this frame's controls go, with them (`c.button`, `clicked`, `isDown`, `pressed`, `consume`), the view now (`c.yaw`, `c.pitch`, `c.turn` for recoil), and `c.act(data)` to send an action of its kind (its host half's `use.acts`);
+- `move(def, controls)`: what holding one does to movement (the host half's `move`, for prediction);
+- `own(client, host)`: what client code sees of the kind (`client.me.items[kind]`), from the host's word;
+- `heldState(client, item, def)`: the held item's state (`client.me.held.state`);
+- `figureSignals(state, def)`: what one in a figure's hand makes it do (aimed where it looks, down the sights, reloading), from its state as the host shows it;
+- `stick(client)`: help for a controller's stick (aim assist: slower over a target, turning with it);
+- `handItem(client)`: an item it puts in the first-person hand in place of the hotbar's (a grenade cooked by its key).
+
+A kit's own events join `ClientEvent` by adding to `ClientEvents` (`declare module '@platform/client' { interface ClientEvents { 'shield.up': { strength: number } } }`), so `e.t === 'shield.up'` narrows in every kit.
 
 **The HUD (`client.hud`).** Plain DOM: client code is bundled with the game and trusted, so it builds its own elements (what the server sends stays sanitized).
 
@@ -1326,7 +1341,7 @@ defineClient(shared, {
 | `hud.theme` | The game's `hud.theme` |
 | `hud.progress`, `marker`, `banner`, `toast`, `pop`, `feed` | The server's HUD calls, on this screen only (a marker takes a point) |
 
-**What the kits read.** `client.me` is the local player as this screen predicts it: `held` (the item and its local state: a gun's `mag`, `reserve`, `reload` progress, `aim`, `spread` in degrees, `sight` and its `color`), `quick` (throwables with keys of their own they carry: how many, less throws the server hasn't taken, and the key) `cooking` (one being held: for how long, its fuse) and `abilities` (their movement abilities' states as this screen predicts them, what a widget's `$ability` binds: a cooldown to draw the moment it starts). `client.thrown` lists what's in the air on this screen, flown as the server flies it (where, rolling, at rest, how old, how far its harm reaches). `client.events` has this frame's happenings: `bullets` (a shot's bullets: ours as fired here, or someone else's, each with where it ended, what it hit, the block's colour and face, whether it carved it, the walls it went through), `reload`, `empty`, `cook`, `thrown`, `bounce`, `thrownEnd`, `fire`, `reset`, and messages. `client.scene` puts things in the world (`scene.item(id)`: an item's look as a mesh), `client.fx` draws effects (`tracer`, `impact`, `flare`, `particles`, `burst`, …; a tracer is a bullet's streak unless its options say otherwise: `fx.tracer(from, to, color, { speed, length, width, glow })` is slower, shorter, thicker or deeper in colour, as Blockfront's blaster bolts are), `client.world.raycast` finds blocks, `client.camera` has the view's `position`, `fov` and `toWorld`, and `client.view.worldPoint('muzzle')` a held item's point in the world. While a replay plays (`client.replay`, see "Replays"), `client.me` and the events are the player it follows.
+**What the kits read.** `client.me` is the local player as this screen predicts it: `hand` (the hotbar's item, its count, and its state as the host shows it), `held` (the item and its state as its kind's kit has it: a gun's `mag`, `reserve`, `reload` progress, `aim`, `spread` in degrees, `sight` and its `color`), and `items` (each kind's word: `items.throwable.quick`, the throwables with keys of their own they carry, how many, less throws the server hasn't taken; `items.throwable.cooking`, one being held; `items.melee.strength`; `items.bow.drawing` and `charge`), and `abilities` (their movement abilities' states as this screen predicts them, what a widget's `$ability` binds: a cooldown to draw the moment it starts). The throwable kit's `thrownOn(client)` lists what's in the air on this screen, flown as the server flies it (where, rolling, at rest, how old, how far its harm reaches). `client.events` has this frame's happenings: the gun kit's `shot`, `bullets` (a shot's bullets: ours as fired here, or someone else's, each with where it ended, what it hit, the block's colour and face, whether it carved it, the walls it went through), `reload` and `empty`; the throwable kit's `cook`, `toss`, `thrown`, `bounce`, `thrownEnd` and `fire`; the platform's `use`, `swing`, `kick`, `land`, `reset`; and messages. `client.scene` puts things in the world (`scene.item(id)`: an item's look as a mesh), `client.fx` draws effects (`tracer`, `impact`, `flare`, `particles`, `burst`, …; a tracer is a bullet's streak unless its options say otherwise: `fx.tracer(from, to, color, { speed, length, width, glow })` is slower, shorter, thicker or deeper in colour, as Blockfront's blaster bolts are), `client.world.raycast` finds blocks, `client.camera` has the view's `position`, `fov` and `toWorld`, and `client.view.worldPoint('muzzle')` a held item's point in the world. While a replay plays (`client.replay`, see "Replays"), `client.me` and the events are the player it follows.
 
 **The kits.**
 
@@ -1379,7 +1394,7 @@ game.events.on('clientMessage', ({ player, name, data }) => {
 
 // client.ts
 defineClient(shared, {
-  kits: standardKits(),
+  kits: [...sounds.standard(), ...firstPerson.standard(), figures.humanoid()],
   setup(client) {
     client.on('hitConfirm', (data) => { /* … */ });
     client.send('emote', { id: 'wave' });

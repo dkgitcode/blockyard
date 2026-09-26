@@ -354,7 +354,7 @@ export class CaseRounds {
 
   private drop(v: Fighter) {
     const q = v.player.position;
-    const inside = q.y > match.map.bounds.min.y + 1;
+    const inside = q.y > (match.map.sea ?? match.map.bounds.min.y + 1);
     // Fallen out of the map: it turns up back at the attackers' end.
     const at = inside ? { x: q.x, y: Math.floor(q.y + 0.01), z: q.z } : { ...match.map.bomb.attack[0] };
     this.carrier = null;

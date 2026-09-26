@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { h } from './dom';
-import { mergeData, plainRecord, scopeCss, type PlainData, type WidgetWire } from './markup';
+import { mergeData, plainRecord, scopeCss, WIDGET_ANCHORS, type PlainData, type WidgetWire } from './markup';
 import { compileWidget, WidgetView, type CompiledWidget } from './widgets';
 import type { FeedPart, HudApi, HudTheme, IconRef, MarkerOptions, MenuEntry, MenuHandle, MenuOptions, ScreenOptions, Vec3, WidgetAnchor } from '../api/types';
 import type { AnchorRef, RadarWire } from '../net/protocol';
@@ -90,6 +90,8 @@ export class GameHud implements Omit<HudApi, 'marker' | 'radar' | 'scoreboard' |
   private markersEl: HTMLElement;
   private markers = new Map<string, Marker>();
   private radarCanvas: HTMLCanvasElement;
+  /** The widget place the radar sits in (null: its own corner). */
+  private radarAt: WidgetAnchor | null = null;
   private radarData: RadarWire | null = null;
   /** The radar follows something: redrawn every frame. */
   private radarLive = false;
@@ -454,9 +456,19 @@ export class GameHud implements Omit<HudApi, 'marker' | 'radar' | 'scoreboard' |
 
   radar(data: RadarWire | null) {
     this.radarCanvas.style.display = data ? '' : 'none';
+    if (data) this.placeRadar(data.at && (WIDGET_ANCHORS as readonly string[]).includes(data.at) ? (data.at as WidgetAnchor) : null);
     this.radarData = data;
     this.radarLive = !!data && (!isSpot(data.center) || data.blips.some((b) => 'at' in b && !isSpot(b.at)));
     if (data) this.drawRadar(data);
+  }
+
+  /** In a widget place, after the widgets there (`order` keeps it last as more come); or back in its corner. */
+  private placeRadar(at: WidgetAnchor | null) {
+    if (at === this.radarAt) return;
+    this.radarAt = at;
+    this.radarCanvas.classList.toggle('in-slot', at !== null);
+    if (at) this.widgetSlot(at).append(this.radarCanvas);
+    else this.root.insertBefore(this.radarCanvas, this.popEl);
   }
 
   private drawRadar(d: RadarWire) {

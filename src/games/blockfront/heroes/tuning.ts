@@ -35,6 +35,15 @@ export const SABER = {
   knockback: 0.35,
 };
 
+/** Each swing's whoosh, pitched (the swinger's own screen plays it too: `client/predict.ts`). */
+export const SWING_PITCH = [1, 1.12, 0.86];
+
+/**
+ * How long a swing of the combo takes (seconds), at a pace (a rage quickens it): as the server
+ * times it (`saber.ts`) and as the swinger's own screen predicts it (`client/predict.ts`).
+ */
+export const swingLength = (n: number, pace: number) => SABER.swings[n] * pace + (n === 2 ? SABER.recover : 0);
+
 /** Holding the guard up (RMB): what it stops, what it costs, how it breaks. */
 export const GUARD = {
   /** Degrees each side of where they look that it covers (a 150° front). */

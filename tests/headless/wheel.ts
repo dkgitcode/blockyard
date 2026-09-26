@@ -62,6 +62,13 @@ export default function wheel() {
   // A slow, steady trackpad drag: one step, not one an event.
   const drag = steps(Array.from({ length: 60 }, (_, i) => [i * 16, 3] as [number, number]));
   check(drag.length === 1, `a steady drag is one step: ${drag.length}`);
+  // Sprinting (Shift held): a Mac sends the wheel's clicks sideways (deltaX, wheelDeltaX), and
+  // they still step, down and back up; a sideways swipe without Shift doesn't.
+  const w = new WheelSteps();
+  const shifted = [0, 40, 80, -1, -1].map((dir, i) => w.step({ timeStamp: i * 40 + (dir < 0 ? 200 : 0), deltaY: 0, deltaX: 100 * Math.sign(dir || 1), wheelDeltaX: -120 * Math.sign(dir || 1), deltaMode: 0, shiftKey: true } as WheelLike)).filter((s) => s !== 0);
+  check(shifted.join() === '1,1,1,-1,-1', `with Shift held, the sideways wheel still steps: ${shifted}`);
+  const swipe = new WheelSteps().step({ timeStamp: 0, deltaY: 0, deltaX: 30, deltaMode: 0, shiftKey: false } as WheelLike);
+  check(swipe === 0, `a sideways swipe without Shift doesn't step (${swipe})`);
 
   // The hotbar: rifle, pistol, knife, frag in 1-4; the wheel goes 1-2-3-4-1 and back 1-4.
   const host = new GameHost(shelf, { engine: wasm, seed: 1, remote: true, radius: 2, budget: Infinity, player: { id: 'p1', name: 'Ann' } });
@@ -82,5 +89,5 @@ export default function wheel() {
     seen.push(A.api.inventory.selected);
   }
   check(seen.join() === '0,1,2,3,0,3', `the wheel goes round every filled slot, the frag's too: ${seen.map((s) => s + 1).join('-')}`);
-  console.log(`  notched ${notched.length}/5, lines ${lines.length}/3, a flick 1, two flicks 2, smooth clicks ${smooth.length}/3, a drag 1 · hotbar ${seen.map((s) => s + 1).join('-')}`);
+  console.log(`  notched ${notched.length}/5, lines ${lines.length}/3, a flick 1, two flicks 2, smooth clicks ${smooth.length}/3, a drag 1, with Shift ${shifted.length}/5 · hotbar ${seen.map((s) => s + 1).join('-')}`);
 }

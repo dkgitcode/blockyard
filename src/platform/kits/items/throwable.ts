@@ -1,5 +1,5 @@
-import type { GameContext, ItemHost, ItemKind, ItemKit, ItemUse, Player, ThrowableItem, ThrownInfo, Vec3 } from '@platform';
-import { flyFor, fuseSteps, type ThrowOwn, isThrowable, lobView, newFlight, STEP, throwable, throwVelocity, type Flight, type FlightWorld, type Throwable } from '@platform/items';
+import type { GameContext, ItemHost, ItemKind, ItemKit, ItemUse, Player, Vec3 } from '@platform';
+import { flyFor, fuseSteps, type ThrowOwn, isThrowable, lobView, newFlight, STEP, throwable, throwVelocity, type Flight, type FlightWorld, type Throwable, type ThrowableItem, type ThrownInfo } from '@platform/items';
 
 /** A fire burning where a molotov broke (`fires`). */
 export interface FireInfo {
@@ -61,6 +61,8 @@ interface Hand {
   cooking: { item: string; cooked: number; key: string | null } | null;
   /** The keys held last step. */
   keysWere: Set<string>;
+  /** Dead, and a throw of their screen's taken since (the one they had cooked, dropped): no more till they're back. */
+  dropped: boolean;
 }
 
 /** A number, no bigger than `max` either way. */
@@ -101,7 +103,7 @@ function throwables1(host: ItemHost): Throwables {
   const hands = new WeakMap<Player, Hand>();
   const handOf = (p: Player) => {
     let h = hands.get(p);
-    if (!h) hands.set(p, (h = { thrown: 0, madeHere: 0, lastThrow: -99, cooking: null, keysWere: new Set() }));
+    if (!h) hands.set(p, (h = { thrown: 0, madeHere: 0, lastThrow: -99, cooking: null, keysWere: new Set(), dropped: false }));
     return h;
   };
   const def = (item: string) => host.game.items.get(item);
@@ -111,7 +113,7 @@ function throwables1(host: ItemHost): Throwables {
   const launch = (by: Player, item: string, t: Throwable, from: Vec3, v: Vec3, fuse: number, key: string, mine: boolean) => {
     const f = newFlight(from, v, fuse);
     live.push({ key, item, t, f, acc: { t: 0 }, by, age: 0 });
-    host.send('$thrown', [key, item, by.id, f.x, f.y, f.z, f.vx, f.vy, f.vz, f.fuse], { except: mine ? by : undefined });
+    host.send('throwable.thrown', [key, item, by.id, f.x, f.y, f.z, f.vx, f.vy, f.vz, f.fuse], { except: mine ? by : undefined });
     // Their figure swings its arm; everyone else hears it go (their own screen played it).
     host.swing(by);
     host.audio({ except: mine ? by : undefined }).play(t.def.sounds?.use ?? 'whoosh', { at: { x: from.x, y: from.y, z: from.z }, volume: 0.7, item: { id: item, sound: 'use' } });
@@ -125,6 +127,13 @@ function throwables1(host: ItemHost): Throwables {
     return true;
   };
 
+  /** One they had cooked, dropped where they fell (from their eyes, straight down), its fuse still burning. */
+  const drop = (p: Player, h: Hand, item: string, t: Throwable, cooked: number) => {
+    if (!p.inventory.take(item, 1)) return;
+    h.lastThrow = host.now();
+    launch(p, item, t, p.eye, { x: 0, y: -1, z: 0 }, fuseSteps(t, cooked), `${p.id}:h${++h.madeHere}`, false);
+  };
+
   /** A throw their screen made: taken, or turned away (locked, every one is). */
   const take = (use: ItemUse<ThrowableItem>, h: Hand, serial: number, item: string, from: Vec3, v: Vec3, cook: number) => {
     if (serial <= h.thrown) return;
@@ -132,9 +141,11 @@ function throwables1(host: ItemHost): Throwables {
     const p = use.player;
     const key = `${p.id}:${serial}`;
     const d = def(item);
+    // Dead: one more (the one they had cooked falls, or a throw that crossed their death on the way), no others.
+    const dead = !p.alive;
     // A little slack on the cooldown: their screen's clock isn't ours.
-    if (use.controls.locked || !isThrowable(d) || p.inventory.count(item) < 1 || use.now - h.lastThrow < throwable(d).cooldown * 0.6) {
-      host.send('$thrownEnd', [key, null], { to: p });
+    if ((dead && h.dropped) || use.controls.locked || !isThrowable(d) || p.inventory.count(item) < 1 || use.now - h.lastThrow < throwable(d).cooldown * 0.6) {
+      host.send('throwable.end', [key, null], { to: p });
       return;
     }
     const t = throwable(d);
@@ -145,6 +156,7 @@ function throwables1(host: ItemHost): Throwables {
     const vel = !(speed > 0) ? throwVelocity(t, p.yaw, p.pitch) : speed > t.speed * 1.05 ? { x: (v.x / speed) * t.speed, y: (v.y / speed) * t.speed, z: (v.z / speed) * t.speed } : v;
     p.inventory.take(item, 1);
     h.lastThrow = use.now;
+    h.dropped = dead;
     launch(p, item, t, start, vel, fuseSteps(t, cook), key, true);
   };
 
@@ -163,7 +175,7 @@ function throwables1(host: ItemHost): Throwables {
     const h = host;
     const game = h.game;
     const at = { x: l.f.x, y: l.f.y, z: l.f.z };
-    h.send('$thrownEnd', [l.key, [at.x, at.y, at.z]]);
+    h.send('throwable.end', [l.key, [at.x, at.y, at.z]]);
     const b = l.t.blast;
     if (b) {
       h.guard(() => h.blast(at, { reach: b.radius, near: b.near, far: b.far, knockback: b.knockback, by: l.by, weapon: l.item }));
@@ -177,7 +189,7 @@ function throwables1(host: ItemHost): Throwables {
       const ground = { x: at.x, y: down ? at.y + 0.05 - down.t : at.y, z: at.z };
       const id = nextFire++;
       fires.push({ id, at: ground, radius: fire.radius, left: fire.duration, dps: fire.damage, by: l.by, weapon: l.item, next: 0.15 });
-      h.send('$fire', [id, ground.x, ground.y, ground.z, fire.radius, fire.duration, fire.color]);
+      h.send('throwable.fire', [id, ground.x, ground.y, ground.z, fire.radius, fire.duration, fire.color]);
       game.audio.play(l.t.def.sounds?.hit ?? 'glass', { at, item: { id: l.item, sound: 'hit' } });
       game.audio.play('fire', { at: ground });
     }
@@ -202,6 +214,7 @@ function throwables1(host: ItemHost): Throwables {
     holds: true,
     step(use) {
       const h = handOf(use.player);
+      if (use.player.alive) h.dropped = false;
       const sent = use.acts;
       if (sent) {
         for (const a of sent) {
@@ -213,6 +226,13 @@ function throwables1(host: ItemHost): Throwables {
         return;
       }
       const c = use.controls;
+      // Dead with one cooked (a bot's, here): it drops where they fell, still live.
+      if (!use.player.alive && h.cooking) {
+        const ck = h.cooking;
+        h.cooking = null;
+        const d = def(ck.item);
+        if (isThrowable(d)) drop(use.player, h, ck.item, throwable(d), ck.cooked);
+      }
       if (!c.active) {
         h.cooking = null;
         h.keysWere.clear();

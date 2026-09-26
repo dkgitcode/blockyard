@@ -97,7 +97,7 @@ function parts() {
 
 /**
  * The split of every game into meta / shared / server / client (docs/REDESIGN-CLIENT-SERVER.md):
- * the launcher's `meta.ts` imports nothing but `@platform`; the client code (`client.ts`) imports
+ * the launcher's `meta.ts` imports nothing but `@platform` (and its cover picture, by URL); the client code (`client.ts`) imports
  * only `@platform/client` and its shared code, and never reaches server code; the shared code
  * (the world, blocks, movement, vehicles: what every screen runs too) never reaches the rules
  * (server files, bots, match state, `@platform/kits`); the server never reaches client code. And
@@ -110,8 +110,10 @@ export default async function split() {
   const all = parts();
   const walked = new Set<string>();
   for (const g of all) {
+    // (And its cover picture, by URL: a string, not code.)
+    const metaOk = (s: string) => s === '@platform' || (s.startsWith('./') && s.endsWith('?url'));
     const meta = imports(g.meta);
-    check(meta.every((s) => s === '@platform'), `${name(g.meta)} may import only '@platform', not ${meta.filter((s) => s !== '@platform').join(', ')}`);
+    check(meta.every(metaOk), `${name(g.meta)} may import only '@platform' and pictures by URL, not ${meta.filter((s) => !metaOk(s)).join(', ')}`);
 
     // The client API (and its kits and math), the public API, its shared code and its own client files.
     const clientOk = (m: string) => CLIENT_PKGS.includes(m) || m === '@platform' || m === '@platform/art' || m === g.shared || isClient(m);
@@ -126,7 +128,7 @@ export default async function split() {
       check(!serverOnly.includes(m), `${name(g.shared)} reaches ${name(m)}, which only the server may`);
     }
     for (const m of graph(g.client)) check(!isServer(m) && !serverOnly.includes(m) && m !== '@platform/kits', `${name(g.client)} reaches ${name(m)}`);
-    for (const m of graph(g.meta)) check(m === g.meta || m === '@platform', `${name(g.meta)} reaches ${name(m)}`);
+    for (const m of graph(g.meta)) check(m === g.meta || m === '@platform' || /\.(webp|jpe?g|png)$/.test(m), `${name(g.meta)} reaches ${name(m)}`);
 
     const rules = graph(g.server);
     for (const m of rules) check(!isClient(m) && !CLIENT_PKGS.includes(m), `${name(g.server)} reaches ${name(m)}`);

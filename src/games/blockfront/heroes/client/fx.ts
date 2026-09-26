@@ -1,4 +1,5 @@
-import type { GunItem, Vec3 } from '@platform';
+import type { Vec3 } from '@platform';
+import type { GunItem } from '@platform/items';
 import type { Client, ClientKit, Node } from '@platform/client';
 import { Color, Quat, Vec3 as V3 } from '@platform/client/math';
 import { HEROES, saberOf, type HeroId } from '../defs';
@@ -548,13 +549,13 @@ export function heroFx(scene: HeroScene): ClientKit {
       const a = Math.random() * Math.PI * 2;
       const r = rnd(0.6, R);
       const at = { x: who.x + Math.cos(a) * r, y: who.y - 1.2 + Math.random() * 0.2, z: who.z + Math.sin(a) * r };
-      client.fx.particles(at, [0.1, 0.0, 0.16], { count: 1, speed: 0.15, size: 0.07, gravity: -1.4, glow: 0.6, life: 0.7, collide: false });
+      client.fx.particles(at, [0.08, 0.0, 0.13], { count: 1, speed: 0.15, size: 0.045, gravity: -1.4, glow: 0.5, life: 0.7, collide: false });
     }
     // Round him, a slow ring of dark sparks.
     const t = now * 2.2;
     for (let i = 0; i < 3; i++) {
       const a = t + (i / 3) * Math.PI * 2;
-      client.fx.particles({ x: who.x + Math.cos(a) * 0.8, y: who.y - 0.4 + Math.sin(t * 1.7 + i) * 0.4, z: who.z + Math.sin(a) * 0.8 }, [0.35, 0.05, 0.7], { count: 1, speed: 0.05, size: 0.04, gravity: 0, glow: 2.5, life: 0.3, collide: false });
+      client.fx.particles({ x: who.x + Math.cos(a) * 0.8, y: who.y - 0.4 + Math.sin(t * 1.7 + i) * 0.4, z: who.z + Math.sin(a) * 0.8 }, [0.35, 0.05, 0.7], { count: 1, speed: 0.05, size: 0.03, gravity: 0, glow: 2.5, life: 0.3, collide: false });
     }
     // Life drawn out of everyone near: a dark thread from them to him, now and then.
     for (const f of client.figures.all) {
@@ -564,7 +565,7 @@ export function heroFx(scene: HeroScene): ClientKit {
       const from = { x: p.x + rnd(-0.2, 0.2), y: p.y + rnd(0.8, 1.5), z: p.z + rnd(-0.2, 0.2) };
       const pts = jag(from, { x: who.x, y: who.y - 0.1, z: who.z }, 0.12);
       for (let i = 1; i < pts.length; i++) B.line('dark', pts[i - 1], pts[i], 0.018, 0.1, now);
-      client.fx.particles(from, [0.4, 0.05, 0.6], { count: 2, speed: 0.6, size: 0.035, gravity: 0, glow: 2, life: 0.25, collide: false });
+      client.fx.particles(from, [0.4, 0.05, 0.6], { count: 2, speed: 0.6, size: 0.028, gravity: 0, glow: 2, life: 0.25, collide: false });
     }
   }
 

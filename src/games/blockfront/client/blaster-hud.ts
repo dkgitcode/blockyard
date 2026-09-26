@@ -1,4 +1,4 @@
-import type { GunItem } from '@platform';
+import type { GunItem } from '@platform/items';
 import type { Client, ClientKit } from '@platform/client';
 import css from './blaster-hud.css?raw';
 

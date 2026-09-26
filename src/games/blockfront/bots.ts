@@ -1,4 +1,4 @@
-import type { Bot, GameContext, Vec3 } from '@platform';
+import type { Bot, GameContext, Player, Vec3 } from '@platform';
 import { shooterBots, throwables, type BotMind, type BotWeapon, type NavGrid, type ShooterBots } from '@platform/kits';
 import type { Conquest } from './conquest';
 import { fighterOf, hostile, type Post } from './match';
@@ -37,6 +37,12 @@ export interface BotHooks {
   fight(bot: Bot, mind: BotMind, distance: number): void;
   /** Weapons the heroes carry, fought with. */
   weapons: Record<string, BotWeapon>;
+  /** Somewhere a bot should be before any post (a hurt hero falling back), or null. */
+  goal?(bot: Bot): Vec3 | null;
+  /** Someone a bot leaves alone for now (a hero falling back lets the far ones be). */
+  ignore?(bot: Bot, other: Player): boolean;
+  /** Each step, once the bots have been driven: last word on their controls (a hero backing off, guard up). */
+  after?(bots: ShooterBots): void;
 }
 
 export function makeBots(game: GameContext, nav: () => NavGrid | null, hotspots: Vec3[], conquest: Conquest, hooks: BotHooks): Bots {
@@ -75,8 +81,10 @@ export function makeBots(game: GameContext, nav: () => NavGrid | null, hotspots:
     nav,
     hotspots,
     weapons: { ...BLASTERS, ...hooks.weapons },
-    hostile: (bot, other) => hostile(bot, other),
+    hostile: (bot, other) => hostile(bot, other) && !hooks.ignore?.(bot, other),
     goal: (bot, _mind: BotMind) => {
+      const own = hooks.goal?.(bot);
+      if (own) return own;
       const post = pick(bot);
       if (!post) return null;
       const a = post.spec.at;
@@ -102,7 +110,12 @@ export function makeBots(game: GameContext, nav: () => NavGrid | null, hotspots:
       return throwables.of(game)?.throw(bot, 'detonator', { at, cook: 0.4 }) ?? false;
     },
   });
+  const drive = bots.update.bind(bots);
   return Object.assign(bots, {
+    update(dt: number, frozen?: boolean) {
+      drive(dt, frozen);
+      if (!frozen) hooks.after?.(bots);
+    },
     forget(bot: { id: string }) {
       aims.delete(bot.id);
     },

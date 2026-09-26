@@ -4,7 +4,9 @@ import type { WidgetDefinition } from '@platform';
  * Each fighter's corner of the screen (top right), a HUD widget of the game's own: in a
  * free-for-all their kills, their place and the leader; in a team mode their side, their kills
  * and score (and the case, while they carry it); always their streak toward the UAV (three) and
- * the Adrenaline Shot (five), and how long those have left. The markup and styles are here;
+ * the Adrenaline Shot (five), and how long those have left; in a free-for-all or Team Deathmatch
+ * on toward the Hellstorm (seven) and the Attack Chopper (ten), and which of those is ready to
+ * call in (5). The markup and styles are here;
  * `personalHud` fills it in every tick with `player.hud.widget('dossier', data)`, and only what
  * changed goes to their screen. It's inked on paper like the rest of the HUD, from the theme's
  * colours.
@@ -25,9 +27,10 @@ export const DOSSIER: WidgetDefinition = {
     <div class="perk case" data-if="carrier"><span class="perk-name">The case</span><span class="perk-time">{{carrier}}</span></div>
     <div class="chip streak">
       <span class="label">Streak</span>
-      <span class="pips"><i data-each="pips" class="pip {{.}}"></i></span>
+      <span class="pips {{pipsClass}}"><i data-each="pips" class="pip {{.}}"></i></span>
       <span class="value more" data-if="extra > 0">+{{extra}}</span>
     </div>
+    <div class="perk ready" data-if="ready"><span class="perk-key">5</span><span class="perk-name">{{ready}}</span><span class="perk-time">Ready</span></div>
     <div class="perk uav" data-if="uav > 0" style="--left: {{uav}}; --of: {{uavFor}}">
       <span class="perk-name">UAV</span><span class="perk-bar"><span></span></span><span class="perk-time">{{uav}}s</span>
     </div>
@@ -95,6 +98,16 @@ export const DOSSIER: WidgetDefinition = {
     .pip.rush:not(.on) {
       background: repeating-linear-gradient(45deg, var(--hud-danger, #e63946) 0 2px, transparent 2px 5px);
     }
+    .pip.hellstorm:not(.on) {
+      background: repeating-linear-gradient(45deg, #ff8c1a 0 2px, transparent 2px 5px);
+    }
+    .pip.chopper:not(.on) {
+      background: repeating-linear-gradient(-45deg, #111 0 2px, var(--hud-accent, #ffcc00) 2px 5px);
+    }
+    /* The streak's cards past five are a little smaller (ten in a row fit). */
+    .pips.long .pip {
+      width: 10px;
+    }
     .pip.on {
       background: var(--hud-accent, #ffcc00);
       animation: pip-in 260ms cubic-bezier(0.3, 1.8, 0.5, 1);
@@ -117,6 +130,30 @@ export const DOSSIER: WidgetDefinition = {
     }
     .perk.uav {
       --c: #ff5c8a;
+    }
+    /* A streak to call in: its key, its name, blinking READY. */
+    .perk.ready {
+      --c: var(--hud-accent, #ffcc00);
+    }
+    .perk-key {
+      display: grid;
+      place-items: center;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 4px;
+      background: var(--hud-accent, #ffcc00);
+      color: #111;
+      font: 700 15px var(--pixel);
+      border-radius: 3px;
+    }
+    .perk.ready .perk-time {
+      font: 600 11px var(--sans);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      animation: ready-blink 1s steps(2, jump-none) infinite;
+    }
+    @keyframes ready-blink {
+      50% { opacity: 0.35; }
     }
     /* Carrying the case: it glows. */
     .perk.case {
@@ -163,9 +200,13 @@ export const DOSSIER: WidgetDefinition = {
     }`,
 };
 
-/** The five streak cards: lit up to the streak; the third and fifth marked (UAV, Adrenaline Shot). */
-export function streakPips(streak: number): string[] {
-  return [0, 1, 2, 3, 4].map((i) => `${i < streak ? 'on' : 'off'}${i === 2 ? ' uav' : i === 4 ? ' rush' : ''}`);
+/**
+ * The streak cards, lit up to the streak: five, the third and fifth marked (UAV, Adrenaline Shot);
+ * with the streaks you call in (`long`), ten, the seventh and tenth marked too (Hellstorm, chopper).
+ */
+export function streakPips(streak: number, long = false): string[] {
+  const marks: Record<number, string> = { 2: ' uav', 4: ' rush', 6: ' hellstorm', 9: ' chopper' };
+  return Array.from({ length: long ? 10 : 5 }, (_, i) => `${i < streak ? 'on' : 'off'}${marks[i] ?? ''}`);
 }
 
 /**
@@ -344,5 +385,105 @@ export const MATCHBAR: WidgetDefinition = {
     }
     @keyframes card-in {
       from { transform: skewX(-10deg) scale(1.7); }
+    }`,
+};
+
+/**
+ * The vote to skip (skipvote.ts), up on everyone's screen while any votes are in: a panel at the
+ * left with the match on now, a card for each vote it takes (lit for those in) and the count.
+ * Everyone's copy says whether they've voted themselves (`voted`, a player's own field), and how
+ * to change that.
+ */
+export const SKIPVOTE: WidgetDefinition = {
+  at: 'left',
+  html: `
+    <div class="vote">
+      <div class="head"><span class="tag">Vote</span><span class="title">Skip it?</span></div>
+      <div class="what">{{what}}</div>
+      <div class="line">
+        <span class="pips"><i data-each="pips" class="pip {{.}}"></i></span>
+        <span class="count">{{votes}} / {{need}}</span>
+      </div>
+      <div class="hint" data-if="!voted">V to vote</div>
+      <div class="hint mine" data-if="voted">You voted · V takes it back</div>
+    </div>`,
+  css: `
+    .vote {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 170px;
+      padding: 7px 12px 8px;
+      background: var(--hud-paper, #fdf1d6);
+      color: var(--hud-fg, #111);
+      border: 3px solid var(--hud-ink, #111);
+      border-left: 12px solid var(--hud-accent, #ffcc00);
+      border-radius: 4px;
+      box-shadow: 6px 6px 0 var(--hud-ink, #111);
+      animation: vote-in 320ms cubic-bezier(0.3, 1.8, 0.5, 1);
+    }
+    .head {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+    }
+    .tag {
+      font: 700 10px var(--sans);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      padding: 1px 5px;
+      background: var(--hud-ink, #111);
+      color: var(--hud-accent, #ffcc00);
+      border-radius: 2px;
+    }
+    .title {
+      font: 700 22px var(--pixel);
+      letter-spacing: 0.04em;
+    }
+    .what {
+      font: 600 11px var(--sans);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.75;
+    }
+    .line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    /* A card for each vote it takes, like the streak's. */
+    .pips {
+      display: flex;
+      gap: 5px;
+    }
+    .pip {
+      width: 13px;
+      height: 16px;
+      border: 2px solid var(--hud-ink, #111);
+      transform: skewX(-10deg);
+      background: rgba(0, 0, 0, 0.08);
+    }
+    .pip.on {
+      background: var(--hud-accent, #ffcc00);
+      animation: pip-in 260ms cubic-bezier(0.3, 1.8, 0.5, 1);
+    }
+    .count {
+      font: 700 20px var(--pixel);
+      font-variant-numeric: tabular-nums;
+    }
+    .hint {
+      font: 600 10px var(--sans);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      opacity: 0.7;
+    }
+    .hint.mine {
+      opacity: 1;
+    }
+    @keyframes vote-in {
+      from { transform: scale(1.35); opacity: 0; }
+    }
+    @keyframes pip-in {
+      from { transform: skewX(-10deg) scale(1.6); }
     }`,
 };

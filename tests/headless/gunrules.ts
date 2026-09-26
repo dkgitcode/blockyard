@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { defineGame, Models, type DamageEvent, type GameDefinition, type GunOptions, type HitscanOptions } from '../../src/platform';
+import { defineGame, Models, type DamageEvent, type GameDefinition, type HitscanOptions } from '../../src/platform';
 import { GameHost } from '../../src/platform/host/game';
 import type { PlayerInput } from '../../src/platform/net/protocol';
-import { assistOf, gun, gunMove, resolveGunRules } from '../../src/platform/items';
+import { assistOf, gun, gunMove, resolveGunRules, type GunOptions } from '../../src/platform/items';
 import { guns as gunKit, melee } from '../../src/platform/kits';
 import { resolveHitscan } from '../../src/platform/sim/hitboxes';
 import { check } from './_harness';
@@ -21,7 +21,6 @@ const range = (rules?: Rules): GameDefinition => {
     world: { terrain: 'flat', flatHeight: 64, spawn: { x: 0.5, y: 65, z: 0.5 }, time: 0.5, freezeTime: true },
     player: { health: 100, hurtCooldown: 0, pvp: true, hotbar: 'items' },
     hitscan: { rewind, hitboxes },
-    guns,
     items: [gunKit(guns), melee()],
     setup(game) {
       game.items.define('rifle', {

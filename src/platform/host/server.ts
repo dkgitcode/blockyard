@@ -351,9 +351,10 @@ export function serve(o: ServeOptions): Promise<GameServer> {
       } catch {
         return;
       }
-      // The server keeps the clock (a client's ticks mean nothing here); restarting everyone's
-      // game and changing their time of day are for development servers.
-      if (!cmd || cmd.t === 'tick' || (!o.cheats && (cmd.t === 'restart' || cmd.t === 'env'))) return;
+      // The server keeps the clock (a client's ticks mean nothing here). Restarting the game and
+      // changing its time of day are for a room of one's own (everyone in it came by its link),
+      // and development servers: never the public game, which is everyone's.
+      if (!cmd || cmd.t === 'tick' || (!o.cheats && !room.own && (cmd.t === 'restart' || cmd.t === 'env'))) return;
       // Running code in the room (development tools): only on a development server. Elsewhere
       // it goes no further than here, and the client hears why.
       if (cmd.t === 'dev' && !o.dev) {

@@ -4,7 +4,8 @@
 // `meta.ts`, `shared.ts`, `server.ts`, `client.ts` and anything in a `client/` folder (a preview
 // sharing a folder prefixes them: `previews/shipyard.server.ts`). What each may import:
 //
-// - `meta.ts`: '@platform' only (types, `defineMeta`), and nothing of its own folder.
+// - `meta.ts`: '@platform' only (types, `defineMeta`), and nothing of its own folder but pictures by
+//   URL (`import cover from './cover.webp?url'`).
 // - `shared.ts`: '@platform', '@platform/art' and its folder's files, but never (however
 //   indirectly) its server or client code, '@platform/client' or '@platform/kits'. The server and
 //   every screen run it.
@@ -53,7 +54,7 @@ function check(folder, allowed, what, { relative: own = () => true } = {}) {
   for (const file of sourceFiles(folder)) {
     for (const { spec } of graph.edges(file)) {
       if (allowed(file).includes(spec) || tool(file, folder, spec)) continue;
-      if (inside(file, spec, folder) && own(file)) continue;
+      if (inside(file, spec, folder) && own(file, spec)) continue;
       problems.push(`${rel(file)}: ${what(file)} may not import '${spec}'`);
     }
   }
@@ -83,7 +84,7 @@ for (const name of readdirSync(games)) {
   const files = sourceFiles(dir);
   for (const f of files) if (role(f, dir)) parts[role(f, dir)].push(f);
   const part = (f) => role(f, dir);
-  check(dir, (f) => ALLOWED[part(f)] ?? [...PUBLIC, '@platform/kits'], (f) => (part(f) ? `game '${name}': ${NAMES[part(f)]} (${relative(dir, f)})` : `game '${name}'`), { relative: (f) => part(f) !== 'meta' });
+  check(dir, (f) => ALLOWED[part(f)] ?? [...PUBLIC, '@platform/kits'], (f) => (part(f) ? `game '${name}': ${NAMES[part(f)]} (${relative(dir, f)})` : `game '${name}'`), { relative: (f, spec) => part(f) !== 'meta' || /\?url$/.test(spec) });
   // What each part reaches in its folder (following types too).
   for (const file of files) {
     const never = NEVER[part(file)];

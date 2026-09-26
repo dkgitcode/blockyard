@@ -1,4 +1,5 @@
 import { defineMeta } from '@platform';
+import cover from './cover.webp?url';
 
 /**
  * Blockfront II: the Rebels against the Empire, troopers and heroes, fighting over the command
@@ -9,6 +10,7 @@ export default defineMeta({
   title: 'Blockfront II',
   tagline: 'Rebels against the Empire: blasters, sabers and the Force, for the command posts of a desert spaceport.',
   accent: '#ffe81f',
+  cover,
   controls: [
     ['LMB', 'fire · saber'],
     ['RMB', 'aim · block'],

@@ -1,5 +1,5 @@
-import type { Bot, GameContext, Player } from '@platform';
-import type { BotMind } from '@platform/kits';
+import type { Bot, GameContext, Player, Vec3 } from '@platform';
+import type { BotMind, ShooterBots } from '@platform/kits';
 import { HERO_ABILITY, coolOf, type HeroMove } from './abilities';
 import { HEROES, type HeroId, type PowerId } from './defs';
 import type { Powers } from './powers';
@@ -11,7 +11,16 @@ export interface HeroBotRules {
   hostile(a: Player, b: Player): boolean;
   powers: Powers;
   sabers(): Sabers | null;
+  /** Where a hurt hero falls back to (the nearest post their side holds), if anywhere. */
+  retreat(p: Player): Vec3 | null;
 }
+
+/**
+ * Falling back: below `below` of their health a hero bot heads for the nearest post their side
+ * holds, leaving alone whoever's further than `leaveBeyond`, until they're back over `until` or
+ * `most` seconds have passed.
+ */
+const FALL_BACK = { below: 0.25, until: 0.5, most: 30, leaveBeyond: 5 };
 
 /** What a hero bot has in mind, beyond the shooter bot's. */
 interface Plan {
@@ -22,6 +31,8 @@ interface Plan {
   zapUntil: number;
   /** When it last thought about a power, and the next time it may. */
   nextPower: number;
+  /** Falling back until (host time; 0: not). */
+  back: number;
 }
 
 const DEG = Math.PI / 180;
@@ -41,7 +52,7 @@ export function heroBots(game: GameContext, rules: HeroBotRules) {
   const plans = new Map<string, Plan>();
   const plan = (b: Bot) => {
     let p = plans.get(b.id);
-    if (!p) plans.set(b.id, (p = { guardUntil: 0, guardAgain: 0, zapUntil: 0, nextPower: 0 }));
+    if (!p) plans.set(b.id, (p = { guardUntil: 0, guardAgain: 0, zapUntil: 0, nextPower: 0, back: 0 }));
     return p;
   };
 
@@ -59,8 +70,21 @@ export function heroBots(game: GameContext, rules: HeroBotRules) {
     });
   };
 
+  /** A hero bot falling back now (hurt): it starts below `FALL_BACK.below`, ends back over `until` or after `most`. */
+  const fallingBack = (bot: Bot): boolean => {
+    const pl = plan(bot);
+    if (!rules.heroOf(bot) || !bot.alive) return (pl.back = 0), false;
+    const now = game.clock.now;
+    const f = bot.health / bot.maxHealth;
+    if (pl.back === 0 && f < FALL_BACK.below && rules.retreat(bot)) pl.back = now + FALL_BACK.most;
+    if (pl.back && (f > FALL_BACK.until || now > pl.back)) pl.back = 0;
+    return pl.back > 0;
+  };
+
   /** Whether to use this power now, against `target` at `d`. */
   const worth = (bot: Bot, power: PowerId, target: Player, d: number, hurtLately: boolean): boolean => {
+    // Falling back: nothing that takes it into the fight.
+    if (plan(bot).back && (power === 'rush' || power === 'leap' || power === 'pull')) return false;
     switch (power) {
       case 'push':
         return around(bot, POWERS.push.range * 0.8, POWERS.push.arc).length >= 2 || (d < 4 && hurtLately);
@@ -136,6 +160,52 @@ export function heroBots(game: GameContext, rules: HeroBotRules) {
         } else c.press(p.key);
         pl.nextPower = now + 1.2;
         break;
+      }
+    },
+    /** Somewhere to be before any post: falling back, the nearest post their side holds (somewhere in it). */
+    goal(bot: Bot): Vec3 | null {
+      if (!fallingBack(bot)) return null;
+      const at = rules.retreat(bot);
+      if (!at) return null;
+      const a = game.rng.range(0, Math.PI * 2);
+      const r = game.rng.range(0, 3);
+      return { x: at.x + Math.cos(a) * r, y: at.y, z: at.z + Math.sin(a) * r };
+    },
+    /** Falling back, it lets be whoever isn't right on it. */
+    ignore(bot: Bot, other: Player): boolean {
+      if (!plan(bot).back) return false;
+      return Math.hypot(other.position.x - bot.position.x, other.position.z - bot.position.z) > FALL_BACK.leaveBeyond;
+    },
+    /**
+     * Once the bots are driven: a hero falling back that's being shot turns to face whoever's
+     * shooting, guard up, and backs off toward the post (the keys worked out again for that).
+     */
+    after(brains: ShooterBots) {
+      const now = game.clock.now;
+      for (const bot of game.bots.all) {
+        if (!fallingBack(bot)) continue;
+        const mind = brains.mind(bot);
+        const m = bot.abilities[HERO_ABILITY] as HeroMove;
+        if (!mind || now - mind.hurtAt > 1 || m.g <= 0 || m.m < GUARD.meter * 0.15) continue;
+        const from = mind.target?.position ?? (mind.heard && now - mind.heard.t < 2 ? mind.heard.at : null);
+        const to = rules.retreat(bot);
+        if (!from || !to) continue;
+        const c = bot.controls;
+        const yaw = Math.atan2(-(from.x - bot.position.x), -(from.z - bot.position.z));
+        c.look(yaw, 0);
+        c.button(0, false);
+        c.button(2, true);
+        const dx = to.x - bot.position.x;
+        const dz = to.z - bot.position.z;
+        const d = Math.hypot(dx, dz) || 1;
+        const f = (-Math.sin(yaw) * dx + -Math.cos(yaw) * dz) / d;
+        const r = (Math.cos(yaw) * dx - Math.sin(yaw) * dz) / d;
+        const there = d < 3;
+        c.hold('KeyW', !there && f > 0.38);
+        c.hold('KeyS', !there && f < -0.38);
+        c.hold('KeyD', !there && r > 0.38);
+        c.hold('KeyA', !there && r < -0.38);
+        c.hold('ShiftLeft', false);
       }
     },
     /** Each step: lightning let go once it's had its while (out of a fight too). */

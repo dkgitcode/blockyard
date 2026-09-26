@@ -33,6 +33,13 @@ export interface GameMeta {
   tagline?: string;
   /** Accent colour for the launcher card (CSS colour). */
   accent?: string;
+  /**
+   * The launcher card's picture, 16:9 (about 960×540, a WebP or JPEG under 100 KB): a shot of the
+   * game that reads as it at a glance, with no HUD and no title (the launcher writes the title over
+   * its lower left). `import cover from './cover.webp?url'`, then `cover`. It also shows, blurred,
+   * behind the home page while the game's world loads.
+   */
+  cover?: string;
   /** Control hints for the title screen, e.g. `[['LMB', 'attack']]` (movement keys are always shown). */
   controls?: [string, string][];
   /**
@@ -69,11 +76,6 @@ export interface SharedDefinition extends GameMeta {
   player?: PlayerOptions;
   /** Where bullets meet players: how far back the host looks for a shot's target, and the hitboxes (see `HitscanOptions`). */
   hitscan?: HitscanOptions;
-  /**
-   * How guns play in this game (see `GunOptions`). For now the screens' gun prediction reads it
-   * here; the host's gun kit takes the same options (`guns(shared.guns)`).
-   */
-  guns?: GunOptions;
   /**
    * Vehicles players can drive (`player.drive(name, state)`): ships, cars, boards. Defined here,
    * not in `setup`, because a pilot's own screen runs them too (see `VehicleDefinition`).
@@ -708,6 +710,8 @@ export interface Vehicle<S extends object = any> {
   readonly state: S;
   /** Its model, kept at its pose (on the pilot's own screen, where prediction has it). */
   readonly prop: Prop | null;
+  /** Steered from afar (`drive`'s `remote`): the pilot's body stays where it was. */
+  readonly remote: boolean;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1135,8 +1139,12 @@ export interface PlayerApi {
    * lists: it goes to their screen as data). From now on their controls drive it (the vehicle's
    * `step`, on the host and, ahead of it, on their own screen), `prop` (its model) is kept at its
    * `pose` on every screen, their camera is the vehicle's, and their body goes where it goes.
+   *
+   * `remote`: they steer it from where they stand (a guided missile, a drone, a turret's camera):
+   * their body stays put, frozen, and everyone still sees it there (it can be shot, and a marker
+   * or an orbit that follows them stays on it), while their controls and camera go to the vehicle.
    */
-  drive<S extends object>(vehicle: string, state: S, opts?: { prop?: Prop }): Vehicle<S>;
+  drive<S extends object>(vehicle: string, state: S, opts?: { prop?: Prop; remote?: boolean }): Vehicle<S>;
   /** Out of their vehicle (their model stays where it was; remove it if it should go). */
   leaveVehicle(): void;
   /** The vehicle they're driving, if any. */
@@ -1241,7 +1249,7 @@ export interface BotControls {
  *   down and across the chest to sprint.
  * - `throw`: a throwable (their default), up by the shoulder ready to throw; it's thrown with `toss`.
  */
-export type HoldStyle = 'sword' | 'axe' | 'bow' | 'item' | 'block' | 'polearm' | 'gun' | 'throw';
+export type HoldStyle = 'sword' | 'axe' | 'bow' | 'item' | 'block' | 'polearm' | 'gun' | 'throw' | (string & {});
 
 /**
  * A 3D held item made of boxes, for things a 16x16 sprite can't do (pikes, staffs, shields).
@@ -1509,12 +1517,8 @@ export interface ItemLook {
   icon?: ItemIcon;
   hold?: HoldSpec;
   sounds?: ItemSounds;
-  /** Guns: the tracer's colour, or false for none (`GunItem.tracer`). */
-  tracer?: string | false;
-  /** Throwables: what it trails as it flies (`ThrowableItem.trail`). */
-  trail?: string;
-  /** Bows: the sprite shown while drawing (`BowItem.drawIcon`). */
-  drawIcon?: SpriteRef;
+  /** Its kind's own look (a gun's `tracer`, a throwable's `trail`, a bow's `drawIcon`: see the kits' item types). */
+  [field: string]: unknown;
 }
 
 /**
@@ -1544,181 +1548,6 @@ export interface ItemSounds {
    */
 }
 
-export interface MeleeItem extends ItemBase {
-  kind: 'melee';
-  damage: number;
-  /** Seconds between swings. */
-  cooldown: number;
-  reach?: number;
-  knockback?: number;
-  /** Also hit other enemies near the target. */
-  sweep?: boolean;
-}
-
-export interface BowItem extends ItemBase {
-  kind: 'bow';
-  /** Item consumed per shot (omit for infinite). */
-  ammo?: string;
-  /** Damage at no charge and at full charge. */
-  damage: [number, number];
-  /** Seconds to full draw. */
-  drawTime: number;
-  speed: number;
-  /** Sprite shown while drawing (default: the item's icon). */
-  drawIcon?: SpriteRef;
-  /** What flies (default: the ammo item's icon; with no ammo, a glowing bolt). */
-  projectile?: SpriteRef;
-}
-
-/**
- * A hitscan gun: each shot is a ray (a few for shotguns) that hits the first thing along it,
- * checked against where targets were on the shooter's own screen (so what you aim at is what you
- * hit, however far away the server is). Firing, recoil, aiming down the sights and reloading
- * happen at once on the shooter's screen; the host decides the hits. Right-click aims, R
- * reloads, and an empty gun reloads by itself.
- */
-export interface GunItem extends ItemBase {
-  kind: 'gun';
-  /** Damage per bullet (per pellet): up close, and at `falloff[1]` blocks and beyond. */
-  damage: number | [near: number, far: number];
-  /** Where damage starts to fall off and where it bottoms out, in blocks. Default [20, 50]. */
-  falloff?: [number, number];
-  /** Damage multiplier for a head hit. Default 1.5. */
-  headshot?: number;
-  /** Rounds per minute. */
-  rpm: number;
-  /** Keeps firing while the trigger is held. Default false: a shot per click. */
-  auto?: boolean;
-  /** Rounds in a magazine, and spare rounds carried (default three magazines' worth). */
-  magazine: number;
-  reserve?: number;
-  /** Seconds to reload a magazine; with `shells`, seconds per round loaded (shotguns), and firing stops it. */
-  reload: number;
-  shells?: boolean;
-  /** Bullets per shot (shotguns). Default 1. */
-  pellets?: number;
-  /**
-   * The cone shots land in, in degrees (half angle): from the hip, aiming down the sights, and
-   * extra while moving or in the air; each shot adds `bloom`, which settles again quickly.
-   */
-  spread?: { hip?: number; aim?: number; move?: number; air?: number; bloom?: number };
-  /** Kick per shot in degrees: up, and at most sideways; `recover` (0..1) is how much of it the view settles back from. */
-  recoil?: { up?: number; side?: number; recover?: number };
-  /**
-   * Aiming down the sights (right mouse): `zoom` (the view's field of view divided by it; default
-   * 1.3), seconds to raise (0.2), speed while aiming (0.6), and what's seen: the gun's own
-   * `iron` sights (default); a red `dot` or a `holo` sight's ring and dot, glowing on the target
-   * through the optic's window (`color`, default red; model the optic with its window open and
-   * its `sight` point in the window's middle); or a `scope` (the view fills with the scope).
-   */
-  aim?: {
-    zoom?: number;
-    time?: number;
-    move?: number;
-    sight?: 'iron' | 'dot' | 'holo' | 'scope';
-    color?: string;
-    /**
-     * Aim assist for someone on a controller (0 none, 1 strong; default 0.6): the view slows
-     * over a player in sight and turns a little with them as they move. Mouse aim is never helped.
-     * A number is the strength; `AimAssist` gives its shape too (over the game's `guns.assist`).
-     */
-    assist?: number | AimAssist;
-  };
-  /** Blocks. Default 150. */
-  range?: number;
-  /** Movement speed while it's held (a heavy gun is slower). Default 1. */
-  mobility?: number;
-  /**
-   * Worked after each shot, a beat after it (0.08 s): a `pump` (the support hand back and forth),
-   * a `bolt` (the gun rolled over to work it), a `lever` (the gun rocked on the support hand, the
-   * firing hand swinging the lever down and back), a `hammer` cocked by the thumb (a
-   * single-action revolver: the gun canted in and tipped up), or a first-person animation of the
-   * game's own (`ViewAnimation`, the hand's motion; keep it shorter than the time between shots).
-   * A humanoid figure works a `lever` and a `hammer` too (`HumanoidPoses.lever`, `.hammer`).
-   */
-  action?: GunAction;
-  /** The tracer's colour, or false for none. Default a warm yellow. */
-  tracer?: string | false;
-  knockback?: number;
-  /**
-   * In a world with destructible blocks (`world.destructible`), what each bullet (each pellet)
-   * carves out where it hits one: a channel `radius` round and `depth` deep, in blocks (see
-   * `world.carve`). Each shot on the same spot goes about `depth + radius` further in (the next
-   * one lands at the bottom of the last one's pit). Default `{ radius: 0.1, depth: 0.05 }`: a
-   * pit a few pixels across, and about seven shots on one spot through a block. `false`: this
-   * gun doesn't carve.
-   */
-  carve?: { radius?: number; depth?: number } | false;
-  /**
-   * Wall-banging: bullets go through walls with up to `depth` blocks of material in them all told
-   * (a block-thick wall head on is 1, at a slant more; what's been shot out of it doesn't count),
-   * losing `damageLoss` of their damage for each block they go through (default 0.4; 1 would
-   * lose it all in a block). Bedrock and blocks that can't be broken stop them. They leave a hole
-   * where they go in and where they come out. Off by default.
-   */
-  penetration?: { depth: number; damageLoss?: number };
-}
-
-/**
- * Something thrown: a grenade, a molotov. Hold its `key` (or, with it in hand, the fire button) to
- * pull the pin, let go to throw it where you look, lobbed a little. It flies, bounces and rolls
- * on the blocks, and goes off when its `fuse` is out (or, with `impact`, when it first hits
- * something): a `blast` (damage falling off from its middle, a push, a crater in destructible
- * walls) and/or a `fire` that burns a while.
- *
- * The thrower's own screen throws it at once and flies it there; the host flies it the same way
- * (the flight is worked out step by step from the same blocks, so it lands in the same place) and
- * decides when and where it goes off. Everyone else sees it fly too, and a live one near them
- * gets a warning marker. `player.throw` throws one from code (bots).
- */
-export interface ThrowableItem extends ItemBase {
-  kind: 'throwable';
-  /** Seconds from the pin to the blast (default 3). With `impact`, the longest it flies before it goes off anyway. */
-  fuse?: number;
-  /** The fuse burns while it's held (cooking it; held too long, it goes off in the hand). Default true, unless `impact`. */
-  cook?: boolean;
-  /** It goes off where it first hits a block or someone (a molotov), rather than bouncing until the fuse is out. */
-  impact?: boolean;
-  /** A key that throws it whatever's in hand (hold to cook, let go to throw), e.g. `'KeyG'`. In hand, the fire button throws it too. */
-  key?: string;
-  /** Blocks a second it leaves the hand at (default 20), lobbed `lift` degrees above where they look (default 7). */
-  speed?: number;
-  lift?: number;
-  /**
-   * How it flies and lands: `gravity` (blocks/s², default 24), `bounce` (0..1 of its speed off a
-   * block it hits head on, default 0.4), `friction` (0..1 of its speed along a surface it hits,
-   * lost; and rolling to a stop, default 0.35), `drag` (0.1), and its `radius` (0.1 blocks).
-   */
-  physics?: { gravity?: number; bounce?: number; friction?: number; drag?: number; radius?: number };
-  /** Seconds between throws (default 0.8). */
-  cooldown?: number;
-  /**
-   * The blast (see `world.explode`): `damage` (or `[middle, edge]`, falling off) to everyone within
-   * `radius` blocks and not behind a wall, the thrower too; `knockback` (default 1); a crater
-   * `carve` blocks round (a destructible world's walls bitten into; in any other, whole blocks
-   * blown out; default 0, none); and how big the explosion looks and sounds, `size` (1 a small
-   * bang; from 2 a shockwave and a big one; default from `radius`, up to 1.4), in `color` (its
-   * fire and ring; default the orange of a fireball).
-   */
-  blast?: { radius: number; damage: number | [middle: number, edge: number]; knockback?: number; carve?: number; size?: number; color?: string };
-  /**
-   * Fire where it goes off (a molotov): flames on the ground `radius` blocks round for `duration`
-   * seconds, burning anyone standing in them for `damage` a second (not behind a wall). `color`
-   * tints the flames.
-   */
-  fire?: { radius: number; duration: number; damage: number; color?: string };
-  /** What it trails as it flies (a lit rag's flame, a fuse's sparks): a colour, or none (default). */
-  trail?: string;
-}
-
-/** A gun's action, worked after each shot (`GunItem.action`). */
-export type GunAction = 'pump' | 'bolt' | 'lever' | 'hammer' | ViewAnimation;
-
-/**
- * How guns play in a game (`GameDefinition.guns`). The host and each shooter's own screen both
- * play by these (a screen predicts its own movement and fires its own shots), so they're data.
- * Every field is optional; the defaults are what Call of Blocky plays by.
- */
 /**
  * Where bullets meet players (`SharedDefinition.hitscan`), for any item kit that casts them
  * (`ItemUse.hitscan`): how far back the host looks, and the hitboxes.
@@ -1732,25 +1561,6 @@ export interface HitscanOptions {
   rewind?: number;
   /** Players' hitboxes for bullets, standing, crouching and sliding: what's given goes over each stance's default (see `PlayerHitbox`). */
   hitboxes?: { stand?: Partial<PlayerHitbox>; crouch?: Partial<PlayerHitbox>; slide?: Partial<PlayerHitbox> };
-}
-
-/** How guns play in a game: the gun kit's options (`guns(options)` on the host, and on each screen). */
-export interface GunOptions {
-  /** Aiming down the sights slows the holder to the gun's `aim.move`. Default true. */
-  aimSlows?: boolean;
-  /** Aiming down the sights stops a sprint, and so does holding the trigger. Both default true. */
-  aimStopsSprint?: boolean;
-  fireStopsSprint?: boolean;
-  /** An empty gun reloads by itself. Default true; off, it waits for R. */
-  autoReload?: boolean;
-  /**
-   * How many shots a screen may get ahead of its gun's rate (3, at least 1). Lag bunches shots
-   * up, so the host takes each one the gun could have fired give or take this many: lower is
-   * stricter with a cheat that fires too fast, higher kinder to a poor connection.
-   */
-  rateSlack?: number;
-  /** Aim assist's shape for every gun (see `AimAssist`); a gun's own `aim.assist` goes over it. */
-  assist?: AimAssist;
 }
 
 /**
@@ -1768,34 +1578,12 @@ export interface PlayerHitbox {
 }
 
 /**
- * Aim assist's shape (controllers only). Over a target near the crosshair the stick turns slower,
- * and while the sticks move the view turns a little with the target as it (or you) moves.
+ * An item, as a game defines it (`items.define`): what every item has (`ItemBase`), the `kind`
+ * whose kit makes it work (see `ItemKind`: `'melee'`, `'gun'`, a kind of the game's own), and that
+ * kind's own fields (a gun's `magazine`: see the kits' types in `@platform/items`, `GunItem`).
+ * An item whose kind no listed kit makes (`'misc'`) is carried, dropped and given, and nothing else.
  */
-export interface AimAssist {
-  /** 0 none, 1 strong. Default 0.6. */
-  strength?: number;
-  /**
-   * Who's near enough the crosshair: within `radius` blocks of its line (1.1, about a body's
-   * width round them), plus `angle` degrees more (about 1.43, so far-off targets get a little extra).
-   */
-  cone?: { radius?: number; angle?: number };
-  /** How much the stick slows over a target at full strength: from the hip (0.45) and aiming down the sights (0.6). It eases off toward the cone's edge. */
-  slow?: { hip?: number; aim?: number };
-  /** How much of a target's movement the view turns with, at full strength: from the hip (0.4) and aiming (0.6). */
-  follow?: { hip?: number; aim?: number };
-}
-
-export interface ConsumableItem extends ItemBase {
-  kind: 'consumable';
-  /** Right-click to use. Return true to consume one. */
-  use(game: GameContext, player: Player): boolean;
-}
-
-export interface MiscItem extends ItemBase {
-  kind: 'misc';
-}
-
-export type ItemDefinition = MeleeItem | BowItem | GunItem | ThrowableItem | ConsumableItem | MiscItem;
+export type ItemDefinition = ItemBase & { kind: string };
 
 /**
  * An item's own icon: a sprite, a block's picture, or a picture of a glTF model (`{ gltf: url }`,
@@ -1834,7 +1622,8 @@ export interface AtlasPixels {
 }
 
 export interface ItemApi {
-  define(id: string, def: ItemDefinition): void;
+  /** An item of the game's (`ItemDefinition`: what every item has, its `kind`, and that kind's own fields: type it with its kit's, `satisfies GunItem`). */
+  define<D extends ItemDefinition>(id: string, def: D): void;
   get(id: string): ItemDefinition | undefined;
   /** The running kind of item this game lists (`items`), by its `kind` (`'gun'`): its kit's hooks and helpers. Null if it isn't listed. */
   kind<K extends ItemKind = ItemKind>(kind: string): K | null;
@@ -1846,15 +1635,6 @@ export interface ItemApi {
   clearPickups(): void;
   /** Register a custom sprite / skin atlas from any canvas (e.g. drawn with Canvas 2D). */
   atlas(name: string, source: HTMLCanvasElement | OffscreenCanvas | AtlasPixels): void;
-}
-
-/** A throwable in the air, as `items.thrown` lists it. */
-export interface ThrownInfo {
-  item: string;
-  position: Vec3;
-  by: Player;
-  radius: number;
-  left: number;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2269,7 +2049,7 @@ export interface HudApi {
   marker(id: string, at: Anchor | null, opts?: MarkerOptions): void;
   /** Show or hide the default crosshair. */
   crosshair(visible: boolean): void;
-  /** A round radar in the bottom-right corner; `null` hides it. */
+  /** A round radar, in the bottom-right corner (or where its `at` puts it); `null` hides it. */
   radar(data: RadarData | null): void;
   /** A panel of clickable entries (shops, upgrade trees, level select); releases the mouse while open. The game keeps running. */
   menu(opts: MenuOptions): MenuHandle;
@@ -2397,6 +2177,11 @@ export interface RadarData {
   range: number;
   /** Blips at spots (`x`, `z`, and `y` for the above / below tick), or following things (`at`). */
   blips: RadarBlip[];
+  /**
+   * Where it sits: in a corner of its own, bottom right (the default), or in a place the game's
+   * widgets use (`'top-right'`), under the widgets there (it moves as they grow and shrink).
+   */
+  at?: WidgetAnchor;
 }
 
 export type RadarBlip = ({ x: number; z: number; y?: number } | { at: Anchor }) & { color: string; size?: number };
@@ -2517,11 +2302,12 @@ export interface HitDetails {
 }
 
 /**
- * What did some damage: a gun's bullet, a melee hit (a blade, a fist, a mob's swing), a projectile
- * (an arrow, a fireball), an explosion (`world.explode` with `damage`, a grenade), fire (a molotov's
- * flames), or the world (a fall, `'world'` damage).
+ * What did some damage: the platform's own causes, a melee hit (a mob's swing, anything from
+ * someone without its own cause), a projectile (an arrow, a fireball), an explosion (`world.explode`
+ * with `damage`), or the world (a fall, `'world'` damage); or an item kit's own (the gun kit's
+ * `'gun'`, the throwable kit's `'explosion'` and `'fire'`, the melee kit's `'melee'`).
  */
-export type DamageCause = 'gun' | 'melee' | 'projectile' | 'explosion' | 'fire' | 'world';
+export type DamageCause = 'melee' | 'projectile' | 'explosion' | 'world' | (string & {});
 
 /**
  * Damage about to land on a player or a creature (the `damage` event), before armour and before

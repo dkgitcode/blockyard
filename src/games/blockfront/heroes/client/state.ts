@@ -3,6 +3,7 @@ import type { Client, ClientKit } from '@platform/client';
 import { HEROES, heroOfSaber, type HeroId, type PowerId } from '../defs';
 import type { FxBeam } from '../fxitems';
 import { MSG, type Clash, type Cut, type Deflects, type Guard, type P3, type Power, type Swing, type Zap } from '../wire';
+import type { OwnSaber } from './predict';
 
 /** A power's gesture on a figure: which, since when (this screen's clock), for how long. */
 export interface Act {
@@ -66,6 +67,11 @@ const v = (p: P3): Vec3 => ({ x: p[0], y: p[1], z: p[2] });
 export class HeroScene {
   /** This screen's clock (`client.time`) as of this frame. */
   now = 0;
+  /** Our own player (null watching, or in a replay), whose saber this screen runs ahead (`own`). */
+  localId: string | null = null;
+  own: OwnSaber | null = null;
+  /** The client, while a frame's messages are heard (for our own saber's echoes). */
+  private client: Client | null = null;
   swings = new Map<string, { n: number; at: number; d: number }>();
   guards = new Map<string, { on: boolean; at: number }>();
   staggers = new Map<string, { at: number; until: number; broke: boolean }>();
@@ -115,19 +121,31 @@ export class HeroScene {
     m.set(k, until);
   }
 
+  /** The client for this frame's messages (null after). */
+  listen(client: Client | null) {
+    this.client = client;
+  }
+
   /** A message from the server. */
   hear(name: string, data: unknown) {
     const now = this.now;
     switch (name) {
       case MSG.swing: {
         const m = data as Swing;
+        // Ours: this screen showed it already (or shows it now, if it didn't guess it).
+        if (m.p === this.localId && this.own && this.client) {
+          this.own.swing(this.client, this, m);
+          this.news.push({ t: 'swing', m });
+          break;
+        }
         this.swings.set(m.p, { n: m.n, at: now, d: m.d });
         this.news.push({ t: 'swing', m });
         break;
       }
       case MSG.guard: {
         const m = data as Guard;
-        this.guards.set(m.p, { on: m.on, at: now });
+        if (m.p === this.localId && this.own) this.own.guardWord(this, m);
+        else this.guards.set(m.p, { on: m.on, at: now });
         if (m.broke || m.st) this.staggers.set(m.p, { at: now, until: now + (m.st ?? 0.7), broke: !!m.broke });
         if (m.st || m.broke) this.swings.delete(m.p);
         this.news.push({ t: 'guard', m });
@@ -268,9 +286,10 @@ export class HeroScene {
 
 /**
  * The first of the hero kits: each frame, this frame's messages from the server into the scene
- * (the kits after it read it).
+ * (the kits after it read it), then our own saber run ahead of the server (`own`).
  */
-export function heroState(scene: HeroScene): ClientKit {
+export function heroState(scene: HeroScene, own: OwnSaber | null = null): ClientKit {
+  scene.own = own;
   return {
     name: 'blockfront.heroes.state',
     setup() {
@@ -279,11 +298,15 @@ export function heroState(scene: HeroScene): ClientKit {
     frame(client: Client) {
       scene.now = client.time;
       scene.news = [];
+      scene.localId = client.replay.playing ? null : client.me.id;
+      scene.listen(client);
       for (const e of client.events) {
         if (e.t === 'reset') scene.clear();
         else if (e.t === 'message' && e.name.startsWith('bfh.')) scene.hear(e.name, e.data);
       }
       for (const [name, data] of scene.takeInjected()) scene.hear(name, data);
+      scene.listen(null);
+      scene.own?.frame(client, scene);
     },
   };
 }

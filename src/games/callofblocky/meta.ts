@@ -1,4 +1,5 @@
 import { defineMeta } from '@platform';
+import cover from './cover.webp?url';
 
 /**
  * Call of Blocky: fast pulp shootouts on Jackrabbit Lane, a Nuketown-style cul-de-sac, and at Big
@@ -9,6 +10,7 @@ export default defineMeta({
   title: 'Call of Blocky',
   tagline: 'Free-for-all, Team Deathmatch and The Briefcase, on Jackrabbit Lane and at Big Kahuna Burger.',
   accent: '#ffcc00',
+  cover,
   controls: [
     ['LMB', 'fire'],
     ['RMB', 'aim'],
@@ -17,21 +19,25 @@ export default defineMeta({
     ['C', 'crouch · slide'],
     ['1 2 3', 'weapons'],
     ['G', 'lethal (hold to cook)'],
+    ['5', 'call in a killstreak'],
     ['F', 'plant · crack the case (hold)'],
     ['L', 'loadout'],
     ['M', 'mode and map (your own game)'],
+    ['V', 'vote to skip this mode and map'],
     ['Tab', 'scores'],
   ],
   // Controllers: the platform's shooter layout (RT fire, LT aim, X reload, B crouch and slide,
-  // L3 sprint, LB / Y switch weapons), with the lethal on RB (hold to cook), the loadout on the
-  // D-pad's up, planting and cracking the case on its down, the mode and map on its right, and
-  // the katana on R3.
+  // L3 sprint, LB switch weapons), with the lethal on RB (hold to cook), the loadout on the
+  // D-pad's up, planting and cracking the case on its down, the mode and map on its right,
+  // killstreaks on its left, and the katana on R3; Y votes to skip (LB alone switches weapons).
   gamepad: {
     R3: ['Digit3', 'katana'],
+    Left: ['Digit5', 'killstreak'],
     RB: ['KeyG', 'lethal'],
     Up: 'KeyL',
     Down: ['KeyF', 'plant · crack'],
     Right: ['KeyM', 'mode and map'],
+    Y: ['KeyV', 'vote to skip'],
   },
   instances: true,
 });

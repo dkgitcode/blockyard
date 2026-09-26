@@ -182,6 +182,22 @@ function heroRefusal(f: Fighter, id: HeroId): string | null {
   return null;
 }
 
+/** The middle of the post their side holds nearest them (where a hurt hero falls back to). */
+function nearestHeld(p: Player): Vec3 | null {
+  const f = fighterOf(p);
+  if (!f) return null;
+  let best: Vec3 | null = null;
+  let bestD = Infinity;
+  for (const post of conquest.held(f.team)) {
+    const d = Math.hypot(post.spec.at.x - p.position.x, post.spec.at.z - p.position.z);
+    if (d < bestD) {
+      bestD = d;
+      best = { ...post.spec.at };
+    }
+  }
+  return best;
+}
+
 /** Where a side may spawn: posts it holds that the other side isn't taking. */
 const spawnable = (t: Team): Post[] => conquest.held(t).filter((p) => p.spec.locked || (!p.contested && p.count[other(t)] === 0));
 
@@ -663,7 +679,7 @@ function matchMenu(game: GameContext, p: Player) {
 export default defineServer(shared, {
   // Its kinds of item: thermal detonators (first: one being cooked takes the fire button), blasters, sabers
   // (the heroes', `heroes/saber.ts`).
-  items: [throwables(), guns({ fireStopsSprint: true }), melee({ fist: false }), ...heroItems()],
+  items: [throwables(), guns(), melee({ fist: false }), ...heroItems()],
   setup(game) {
     match.fighters = fighters = new Map();
     match.phase = 'playing';
@@ -680,12 +696,13 @@ export default defineServer(shared, {
     conquest = new Conquest(game);
     defineWeapons(game);
     setupSkies(game); // skies
-    heroes = setupHeroes(game, { teamOf: (p) => fighterOf(p)?.team ?? null, hostile });
+    // (A hurt hero falls back to the nearest post their side holds.)
+    heroes = setupHeroes(game, { teamOf: (p) => fighterOf(p)?.team ?? null, hostile, retreat: (p) => nearestHeld(p) });
     heroes.define();
     game.hud.define('conquest', CONQUEST);
     game.hud.define('status', STATUS);
     navs = new Map(MAPS.map((m) => [m.id, navGrid(game, { bounds: m.bounds })]));
-    bots = makeBots(game, () => navs.get(match.map.id) ?? null, hotspots, conquest, { fight: (b, m, d) => heroes.botFight(b, m, d), weapons: heroes.botWeapons });
+    bots = makeBots(game, () => navs.get(match.map.id) ?? null, hotspots, conquest, heroes.botHooks);
 
     game.events.on('playerJoin', ({ player }) => {
       const f = fighters.get(player.id) ?? addFighter(game, player);

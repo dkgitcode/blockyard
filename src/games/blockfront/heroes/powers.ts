@@ -465,6 +465,24 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
     }
   };
 
+  // Someone new on the scene: what's still going (stances, rages, auras, lightning, a choke), so
+  // their screen shows it too.
+  game.events.on('playerReady', ({ player: to }) => {
+    const t = now();
+    for (const [id, g] of going) {
+      const soon = (until: number) => Math.round((until - t) * 100) / 100;
+      const tell = (m: Power) => game.clients.send(to, MSG.power, m);
+      if (g.soresu > t) tell({ p: id, k: 'soresu', on: true, t: soon(g.soresu) });
+      if (g.rage > t) tell({ p: id, k: 'rage', on: true, t: soon(g.rage) });
+      if (g.aura > t) tell({ p: id, k: 'aura', on: true, t: soon(g.aura) });
+      if (g.lightning > t) {
+        tell({ p: id, k: 'lightning', on: true, t: soon(g.lightning) });
+        game.clients.send(to, MSG.zap, { p: id, hits: g.zapped ? g.zapped.split(',') : [] } satisfies Zap);
+      }
+    }
+    for (const [victim, h] of held) if (h.kind === 'choke') game.clients.send(to, MSG.power, { p: h.by.id, k: 'choke', on: true, target: victim, t: Math.round((h.until - t) * 100) / 100 } satisfies Power);
+  });
+
   // The movement abilities' powers: Luke's rush (cutting through), his leap and its landing, and
   // every hero's second jump.
   game.events.on('ability', ({ player: p, ability, name }) => {

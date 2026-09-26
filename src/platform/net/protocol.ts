@@ -43,6 +43,8 @@ export interface RadarWire {
   center: AnchorRef;
   heading?: number;
   range: number;
+  /** A widget place (`WidgetAnchor`) to sit in; its own corner if none (or one the screen doesn't know). */
+  at?: string;
   blips: (({ x: number; z: number; y?: number } | { at: AnchorRef }) & { color: string; size?: number })[];
 }
 

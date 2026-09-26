@@ -23,6 +23,7 @@ const HUD_FILES = [
   'src/platform/fx/effects.ts',
   'src/platform/audio/sfx.ts',
   'src/platform/client/present.ts',
+  'src/platform/client/debris.ts',
 ];
 const FILES = [
   // First person.
@@ -33,10 +34,12 @@ const FILES = [
   'src/platform/client/humanoid.ts',
   'src/platform/client/entities.ts',
   'src/platform/client/figures.ts',
+  'src/platform/client/avatars.ts',
   // HUD and effects.
   ...HUD_FILES,
   // Replays.
   'src/platform/client/replay.ts',
+  'src/platform/client/replays.ts',
 ];
 const LITERALS = ['gun', 'sword', 'bow', 'throw', 'axe', 'polearm', 'melee', 'throwable', 'rifle', 'pistol'];
 const WORDS = ['stylename', 'stance', 'ads', 'pump', 'bolt', 'lever', 'hammer', 'scope', 'rifle', 'pistol'];

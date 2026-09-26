@@ -2,7 +2,7 @@
 const CONTROLS = 'button:not(:disabled), a[href], input[type=range], label.toggle, [data-pad]';
 
 /** The first of these on show is where the highlight starts. */
-const FIRST = ['.menu-entry.active', '.result-buttons .btn.primary', '.menu-entry', '.btn.primary', '.home-play', '.inv-cell'];
+const FIRST = ['.menu-entry.active', '.result-buttons .btn.primary', '.menu-entry', '.btn.primary', '.pause-item.primary', '.home-play', '.inv-cell'];
 
 type Dir = 'Up' | 'Down' | 'Left' | 'Right';
 

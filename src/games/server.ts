@@ -14,7 +14,7 @@ export const games: GameDefinition[] = [callofblocky, blockfront, arena, starfig
 
 /**
  * Development-only games (a development server hosts them when named; the headless tests use
- * them): the art previews, the model gallery, the movement lab and High Noon. Whether a server
+ * them): the art previews, the model gallery, the movement lab, High Noon and Laser Tag (the item-kit litmus). Whether a server
  * offers them is its own decision.
  */
 export async function devGames(): Promise<GameDefinition[]> {
@@ -30,6 +30,7 @@ export async function devGames(): Promise<GameDefinition[]> {
     import('./blockfront/previews/map.server'),
     import('./moves/server'),
     import('./highnoon/server'),
+    import('./lasertag/server'),
   ]);
   return loaded.map((m) => m.default);
 }

@@ -96,7 +96,7 @@ export default function gamepad() {
   check(binds.Up === 'KeyL' && binds.R3 === 'Digit3' && binds.RB === 'KeyG' && binds.Down === 'KeyF' && binds.Right === 'KeyM' && binds.RT === 'LMB', `the game's buttons over the platform's: ${JSON.stringify(binds)}`);
   const hints = padHints(cob, true, { jump: 'Space', crouch: 'KeyC', sprint: 'ShiftLeft' });
   const said = Object.fromEntries(hints.map(([k, v]) => [v, k]));
-  const want: Record<string, string> = { fire: 'RT', aim: 'LT', jump: 'A', 'crouch · slide': 'B', sprint: 'L3', reload: 'X', switch: 'LB Y', lethal: 'RB', katana: 'R3', loadout: 'D-pad ↑', 'plant · crack': 'D-pad ↓', 'mode and map': 'D-pad →', scores: 'View', pause: 'Menu' };
+  const want: Record<string, string> = { fire: 'RT', aim: 'LT', jump: 'A', 'crouch · slide': 'B', sprint: 'L3', reload: 'X', switch: 'LB', 'vote to skip': 'Y', lethal: 'RB', katana: 'R3', loadout: 'D-pad ↑', 'plant · crack': 'D-pad ↓', killstreak: 'D-pad ←', 'mode and map': 'D-pad →', scores: 'View', pause: 'Menu' };
   for (const [job, button] of Object.entries(want)) check(said[job] === button, `hint "${button} ${job}": ${JSON.stringify(hints)}`);
   console.log(`  stick ${(-full.dz).toFixed(2)} b/s (W ${(-keys.dz).toFixed(2)}), half ${(-half.dz).toFixed(2)}, sprint ${Math.hypot(sprint.dx, sprint.dz).toFixed(2)} · hotbar ${slots.join(' ')} · ${hints.map(([k, v]) => `${k} ${v}`).join(' · ')}`);
 }

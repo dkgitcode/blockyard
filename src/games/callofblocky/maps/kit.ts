@@ -39,6 +39,8 @@ export interface Terraform {
  * - `floorY`: the y players stand at on the ground (the top of the ground blocks is `floorY`).
  *   All maps share it (the world's plain ground and its unbreakable layer are at `floorY - 1`).
  * - `bounds`: the playable box (bots walk inside it; under it is out of the map).
+ * - `sea`: open water round it (Hijacked's): whoever's feet go under this y has gone overboard,
+ *   and is out of the map as surely as under its bounds.
  * - `spawns`: where fighters appear in a free-for-all, and respawn in Team Deathmatch.
  * - `teams`: each team's side (Team Deathmatch's first spawns), the first team's first.
  * - `bomb`: The Briefcase: where the attackers and the defenders start, and the two sites.
@@ -55,6 +57,7 @@ export interface MapSpec {
   structures: Blueprint[];
   terraform: Terraform[];
   bounds: { min: Vec3; max: Vec3 };
+  sea?: number;
   spawns: SpawnPoint[];
   teams: [SpawnPoint[], SpawnPoint[]];
   bomb: { attack: SpawnPoint[]; defend: SpawnPoint[]; sites: [Site, Site] };

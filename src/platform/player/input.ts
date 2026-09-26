@@ -123,7 +123,12 @@ export class Input {
     window.addEventListener('mouseup', (e) => {
       this.buttonsDown &= ~(1 << e.button);
     }, opts);
-    target.addEventListener('contextmenu', (e) => e.preventDefault(), opts);
+    // No browser menu on a right-click anywhere in the game: the canvas, and the menus and screens
+    // over it too. On Windows the menu comes as the button goes back up, so a right-click that
+    // opens a screen (a shopkeeper) would pop it over the screen. Text fields and selected text keep it.
+    window.addEventListener('contextmenu', (e) => {
+      if (!wantsMenu(e.target)) e.preventDefault();
+    }, opts);
     window.addEventListener('mousemove', (e) => {
       if (Math.abs(e.movementX) + Math.abs(e.movementY) > 6) this.use('mouse');
       if (!this.pointer) return;
@@ -409,12 +414,18 @@ export class Input {
   }
 }
 
+/** A right-click here should get the browser's menu: in a text field (paste), or over selected text (copy). */
+function wantsMenu(target: EventTarget | null): boolean {
+  if (target instanceof Element && target.closest('input, textarea, [contenteditable]')) return true;
+  return !!document.getSelection()?.toString();
+}
+
 function isGameKey(code: string): boolean {
   return code === 'Space' || code === 'Tab' || code.startsWith('Arrow') || code === 'F3' || code === 'F1' || code === 'KeyE';
 }
 
 /** What a wheel step needs of a `WheelEvent`. */
-export type WheelLike = Pick<WheelEvent, 'deltaY' | 'deltaMode' | 'timeStamp'> & { wheelDeltaY?: number };
+export type WheelLike = Pick<WheelEvent, 'deltaY' | 'deltaMode' | 'timeStamp'> & { deltaX?: number; shiftKey?: boolean; wheelDeltaX?: number; wheelDeltaY?: number };
 
 /**
  * Hotbar steps from the mouse wheel. A notched wheel's click is an event of its own (in lines, or
@@ -431,12 +442,14 @@ export class WheelSteps {
 
   /** Steps (-1, 0 or 1) for one event. */
   step(e: WheelLike): number {
-    const px = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1);
+    // With Shift held (sprinting), a Mac (and Chrome on Windows) turns the wheel's scroll sideways: it's still the wheel.
+    const sideways = !!e.shiftKey && !e.deltaY;
+    const px = (sideways ? (e.deltaX ?? 0) : e.deltaY) * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1);
     if (!(px !== 0)) return 0;
     const dir = Math.sign(px);
     const size = Math.abs(px);
     const t = e.timeStamp;
-    const legacy = e.wheelDeltaY;
+    const legacy = sideways ? e.wheelDeltaX : e.wheelDeltaY;
     const notch = e.deltaMode === 1 || (typeof legacy === 'number' && legacy !== 0 && legacy % 120 === 0);
     const fresh = t - this.t > 120 || dir !== this.dir;
     const push = size > this.size * 1.5 && t - this.stepped > 150;

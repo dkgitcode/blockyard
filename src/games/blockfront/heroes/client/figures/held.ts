@@ -1,4 +1,5 @@
 import type { HoldSpec, ItemPoses } from '@platform';
+import type { GunItem } from '@platform/items';
 import type { FigureHeld } from '@platform/client';
 import { Vec3 } from '@platform/client/math';
 
@@ -64,7 +65,7 @@ export function heldInfo(held: FigureHeld): HeldInfo | null {
     stance: def?.hold?.stance,
     hands: gun ? gunHands(def?.hold) : undefined,
     poses: def?.hold?.poses,
-    action: def?.kind === 'gun' && typeof def.action === 'string' ? def.action : undefined,
+    action: def?.kind === 'gun' && typeof (def as GunItem).action === 'string' ? ((def as GunItem).action as string) : undefined,
     throws: def?.kind === 'throwable',
   };
 }

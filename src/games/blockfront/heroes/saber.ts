@@ -1,6 +1,6 @@
 import type { ItemBase, ItemKind, ItemKit, ItemUse, Player } from '@platform';
 import { heroOfSaber, type HeroId } from './defs';
-import { SABER, GUARD } from './tuning';
+import { GUARD, SABER, SWING_PITCH, swingLength } from './tuning';
 import { MSG, p3, type Guard as GuardMsg, type Swing } from './wire';
 
 /** A hero's lightsaber: `kind: 'saber'` (the `sabers()` kit makes it work). */
@@ -181,12 +181,14 @@ function begin(use: ItemUse<SaberItem>, s: SaberState, n: number, rules: SaberRu
   const p = use.player;
   s.n = n;
   s.t = 0;
-  s.len = SABER.swings[n] * rules.pace(p) + (n === 2 ? SABER.recover : 0);
+  s.len = swingLength(n, rules.pace(p));
   s.struck = false;
   s.asked = -99;
   s.next = (n + 1) % 3;
-  use.swing('use', n === 2 ? 1.3 : 1);
-  use.host.audio().play('bfh_saber_swing', { at: p.eye, pitch: [1, 1.12, 0.86][n] * (0.96 + Math.random() * 0.08) });
+  // Their figure swings for everyone; their own screen swings their first-person arm and plays the
+  // whoosh itself, the moment they press (it predicts their swings: `client/predict.ts`).
+  use.host.swing(p);
+  use.host.audio({ except: p }).play('bfh_saber_swing', { at: p.eye, pitch: SWING_PITCH[n] * (0.96 + Math.random() * 0.08) });
   rules.send(MSG.swing, { p: p.id, n, d: Math.round(s.len * 1000) / 1000 } satisfies Swing);
 }
 

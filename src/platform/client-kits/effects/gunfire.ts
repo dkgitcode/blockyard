@@ -1,5 +1,7 @@
-import type { GunItem, Vec3 } from '@platform';
-import type { Client, ClientBullet, ClientEvent, ClientKit } from '@platform/client';
+import type { Vec3 } from '@platform';
+import { isGun, type GunItem } from '@platform/items';
+import type { Client, ClientEvent, ClientKit } from '@platform/client';
+import type { ClientBullet } from '../items/gun';
 
 /** A shot's bullets (the `bullets` event). */
 type Bullets = Extract<ClientEvent, { t: 'bullets' }>;
@@ -38,7 +40,7 @@ export function gunfire(): ClientKit {
 
 const gunOf = (client: Client, item: string): GunItem | null => {
   const def = client.item(item);
-  return def?.kind === 'gun' ? def : null;
+  return isGun(def) ? def : null;
 };
 
 function shot(client: Client, e: Bullets) {

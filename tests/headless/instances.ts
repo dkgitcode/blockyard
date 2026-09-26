@@ -33,6 +33,9 @@ function client(port: number, path: string, name: string) {
     },
     /** Who's playing, as this client last saw. */
     players: () => [...batches].reverse().find((b) => b.frame)?.frame?.players.map((p) => p.name) ?? [],
+    /** The time of day, as this client last saw. */
+    time: () => [...batches].reverse().find((b) => b.frame)?.frame?.time ?? -1,
+    send: (cmd: ClientCommand) => ws.send(encode(cmd)),
     close: () => ws.close(),
   };
 }
@@ -78,6 +81,13 @@ export default async function instances() {
     await until('both playing', () => ann.players().includes('Ann') && bob.players().includes('Bob'));
     await wait(500);
     check(!ann.players().includes('Bob') && !bob.players().includes('Ann'), `each room sees only its own: ${ann.players()} | ${bob.players()}`);
+    // The time of day (and restarting) is Bob's to change in his own room, and nobody's in the
+    // public one (a server without cheats).
+    const before = ann.time();
+    ann.send({ t: 'env', time: 0.9 });
+    bob.send({ t: 'env', time: 0.9 });
+    await until('Bob’s clock set', () => Math.abs(bob.time() - 0.9) < 0.01);
+    check(Math.abs(ann.time() - before) < 0.01, `the public game's clock stays: ${before} -> ${ann.time()}`);
     check(started() === 2, `a thread per room: ${started()}`);
     const list = (await (await fetch(`${base}/games`)).json()) as { games: { id: string; players: number; rooms: number; playingOwn: number; instances: boolean }[]; rooms: number };
     const bw = list.games.find((g) => g.id === 'bedwars')!;

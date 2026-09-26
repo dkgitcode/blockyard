@@ -58,13 +58,17 @@ export interface MatchPlan {
 
 /**
  * What a public room plays, match after match: every mode on every map, never the same mode or
- * map twice running. It starts where Call of Blocky always has: a free-for-all on Jackrabbit Lane.
+ * map twice running (round the end to the start too). It starts where Call of Blocky always has:
+ * a free-for-all on Jackrabbit Lane.
  */
 export const ROTATION: MatchPlan[] = [
   { mode: 'ffa', map: 'jackrabbit' },
   { mode: 'tdm', map: 'kahuna' },
-  { mode: 'case', map: 'jackrabbit' },
-  { mode: 'ffa', map: 'kahuna' },
+  { mode: 'case', map: 'hijacked' },
   { mode: 'tdm', map: 'jackrabbit' },
   { mode: 'case', map: 'kahuna' },
+  { mode: 'ffa', map: 'hijacked' },
+  { mode: 'case', map: 'jackrabbit' },
+  { mode: 'ffa', map: 'kahuna' },
+  { mode: 'tdm', map: 'hijacked' },
 ];

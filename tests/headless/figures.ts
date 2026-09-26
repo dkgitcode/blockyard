@@ -43,7 +43,7 @@ function fakeFigure(rest: Record<HumanoidJoint, { position: THREE.Vector3; quate
   const rig: FigureRig = { body, root: skeleton, joints, rest, straight };
   const hand = new THREE.Object3D();
   joints.handR.add(hand);
-  return { id: 1, player: null, type: 'fake', spec: Models.gltf('/fake.glb', { rig: 'humanoid' }), root, hand, rig, state: still(), held: null, posed: false };
+  return { id: 1, player: null, type: 'fake', spec: Models.gltf('/fake.glb', { rig: 'humanoid' }), root, hand, rig, state: still(), held: null, posed: false, used: () => {}, point: () => null };
 }
 
 /** The spec's rest pose (docs/HUMANOID.md) as rest places and standing-straight heights. */
@@ -78,9 +78,9 @@ function heldIn(fig: Figure, def: Partial<ItemDefinition>, points: FigureHeld['p
  * (an item's poses over its figure's, a free hand, a reload's cycle, an action worked, a throw).
  */
 export default async function figures() {
-  // Only the public API: the kit's files import '@platform', '@platform/client', its math, and each other.
+  // Only the public API: the kit's files import '@platform', '@platform/client', its math, the item kits' shared parts (a gun's type), and each other.
   const dir = 'src/platform/client-kits/figures';
-  const allowed = new Set(['@platform', '@platform/client', '@platform/client/math']);
+  const allowed = new Set(['@platform', '@platform/client', '@platform/client/math', '@platform/items']);
   for (const f of readdirSync(dir).filter((n) => n.endsWith('.ts'))) {
     const src = readFileSync(`${dir}/${f}`, 'utf8');
     const specs = [...src.matchAll(/(?:import|export)[^'"]*?from\s+'([^']+)'/g)].map((m) => m[1]);
@@ -124,7 +124,7 @@ export default async function figures() {
   run([fake], 0.1, {});
   check(sprite.mount.parent === fake.hand && Math.abs(sprite.node.scale.x - 0.62) < 1e-9 && sprite.node.position.y < -0.3, 'a sprite in the fist at the end of the hand');
   // A figure off the rig: what it holds goes in its fist; the kit leaves its animation to it.
-  const box: Figure & { held: FigureHeld | null } = { id: 2, player: 'p', type: 'box', spec: Models.humanoid({ skin: [0, 0] }), root: new THREE.Group(), hand: new THREE.Object3D(), rig: null, state: still(), held: null, posed: false };
+  const box: Figure & { held: FigureHeld | null } = { id: 2, player: 'p', type: 'box', spec: Models.humanoid({ skin: [0, 0] }), root: new THREE.Group(), hand: new THREE.Object3D(), rig: null, state: still(), held: null, posed: false, used: () => {}, point: () => null };
   box.held = heldIn(box, { kind: 'gun' }, { grip: new THREE.Vector3(0, 0, 0.1) }, 1);
   run([box], 0.1, {});
   check(!box.posed && Math.abs(box.held.node.scale.x - 0.7) < 1e-9 && Math.abs(box.held.node.rotation.x - Math.PI / 2) < 1e-9, 'off the rig: a gun along the arm, the figure left to animate itself');

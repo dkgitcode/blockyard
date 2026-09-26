@@ -1,21 +1,25 @@
 import { defineServer, type Bot, type GameContext, type IconRef, type MenuHandle, type MenuOptions, type Pickup, type Player, type Vec3 } from '@platform';
 import { guns, melee, navGrid, throwables, type NavGrid } from '@platform/kits';
+import { AmmoBags } from './ammo';
 import { ATLAS, defineArt, OUTFITS, skinOrigin } from './art';
 import { CaseRounds } from './briefcase';
 import { makeBots, type Bots } from './bots';
-import { DOSSIER, MATCHBAR, streakPips } from './hud';
+import { DOSSIER, MATCHBAR, SKIPVOTE, streakPips } from './hud';
 import { MAPS, mapById, type SpawnPoint } from './map';
 import { fighterOf, hostile, match, teamFighters, type Fighter } from './match';
 import { FFA_LIMIT, MODES, ROTATION, ROUNDS, TDM_LIMIT, TEAMS, type MatchPlan, type ModeId, type Team } from './modes';
 import { COLORS, fighterModel, shared } from './shared';
-import { BLURBS, defineWeapons, feedIcon, LETHAL_BLURBS, LETHAL_COUNT, LETHALS, PRIMARIES, WEAPONS, weaponName, type Lethal, type Primary } from './weapons';
+import { SkipVote } from './skipvote';
+import { BLURBS, defineWeapons, feedIcon, LETHAL_BLURBS, LETHAL_COUNT, LETHALS, PRIMARIES, SIDEARMS, WEAPONS, weaponName, type Lethal, type Primary } from './weapons';
 import { outfitId, setupProgression, type Progression } from './progression'; // [progression]
 import { killcam, killcamHolds } from './killcam';
+import { selfHarm, Streaks } from './streaks';
+import { STREAK_IDS, STREAKS } from './streaks/kinds';
 
 /**
  * Call of Blocky: fast pulp shootouts against bots and people, on Jackrabbit Lane (a
- * Nuketown-style cul-de-sac) and at Big Kahuna Burger (a burger joint, its parking lot and the
- * motel next door). Three modes (modes.ts):
+ * Nuketown-style cul-de-sac), at Big Kahuna Burger (a burger joint, its parking lot and the motel
+ * next door) and aboard Hijacked's superyacht (overboard is the end of you). Three modes (modes.ts):
  *
  * - **Free-for-all**: first to 25 kills (or the most when the clock runs out). The briefcase turns
  *   up on the street now and then: grab it for points and a radar sweep.
@@ -25,11 +29,16 @@ import { killcam, killcamHolds } from './killcam';
  *
  * Bots fill the match (six fighters in a free-for-all, four a side in the team modes); people
  * joining take a bot's place. A public room goes round the modes and maps match by match
- * (`ROTATION`); in a room of one's own (`?room=`), M picks the mode and the map.
+ * (`ROTATION`); in a room of one's own (`?room=`), M picks the mode and the map. Either way, V
+ * votes to skip the match that's on: once more than half the people in it have, the next is on
+ * (skipvote.ts).
  *
- * Everyone carries a primary of their choosing (L), the Lucky 45, a katana and a lethal (G: two
- * Pineapple frags or a Mia firebomb). Three kills in a row light up the radar for you (UAV); five
- * get an Adrenaline Shot: faster, and patched up.
+ * Everyone carries a primary and a sidearm of their choosing (L), a katana and a lethal (G: two
+ * Pineapple frags or a Mia firebomb). Whoever goes down drops a bag of ammo: walk over it to top
+ * up your spare rounds (ammo.ts). Three kills in a row light up the radar for you (UAV); five get
+ * an Adrenaline Shot: faster, and patched up. In a free-for-all or Team Deathmatch, seven earn a
+ * Hellstorm missile to steer down onto them, and ten an Attack Chopper to fly and shoot from, each
+ * called in with 5 when you like (`streaks/`).
  */
 
 const TIME_LIMIT: Record<ModeId, number> = { ffa: 8 * 60, tdm: 10 * 60, case: Infinity };
@@ -38,8 +47,9 @@ const MAX_FIGHTERS = 8;
 const RESPAWN = 3;
 /** How long the Adrenaline Shot lasts. */
 const RUSH = 15;
-/** Seconds between the end of a match and the next. */
+/** Seconds between the end of a match and the next; between a match skipped (a vote) and the next. */
 const INTERMISSION = 12;
+const SKIP_PAUSE = 4;
 const BOT_NAMES = ['Lucky Lou', 'Dolly Dagger', 'Sal Nero', 'Candy Kane', 'Rocco', 'Velma', 'Big Tony', 'Honey', 'Duke', 'Jackie Rabbit', 'Frankie Two-Guns', 'Mona', 'Zed', 'Butch'];
 
 let fighters = match.fighters;
@@ -50,6 +60,10 @@ let overAt = 0;
 let firstBlood = false;
 let bots: Bots;
 let rounds: CaseRounds;
+/** The killstreaks you steer: the Hellstorm and the Attack Chopper (`streaks/`). */
+let streaks: Streaks;
+/** Ammo bags the fallen drop (ammo.ts). */
+let ammo: AmmoBags;
 /** Each map's walking grid (built once its blocks have loaded, the first time a match is on it). */
 let navs = new Map<string, NavGrid>();
 /** The map's hotspots, where bots drift (the array the bots read: refilled for each map). */
@@ -70,6 +84,9 @@ const watching = new Map<string, Player>();
 /** The match settings menu in a room of one's own, and whether anyone's opened it yet. */
 let settings: MenuHandle | null = null;
 let offered = false;
+/** The vote to skip the match that's on (skipvote.ts), and whether the match now over was skipped. */
+let vote: SkipVote;
+let skipped = false;
 /** [progression] XP, levels and unlocks (progression.ts). */
 let xp: Progression;
 
@@ -78,9 +95,20 @@ const ordinal = (n: number) => `${n}${n % 10 === 1 && n % 100 !== 11 ? 'st' : n 
 const isCase = () => match.mode.id === 'case';
 const planName = (m: MatchPlan) => `${MODES[m.mode].name} on ${mapById(m.map)?.name ?? m.map}`;
 
-/** What a bot carries: mostly rifles and SMGs, now and then a shotgun, rarely a sniper. */
+/** What a bot carries: mostly rifles and SMGs, now and then a shotgun or the machine gun, rarely a scope. */
+const BOT_PRIMARIES: [Primary, number][] = [
+  ['rifle', 0.3],
+  ['smg', 0.18],
+  ['tommy', 0.13],
+  ['shotgun', 0.11],
+  ['sawnoff', 0.06],
+  ['lmg', 0.09],
+  ['marksman', 0.07],
+  ['sniper', 0.06],
+];
 function botPrimary(r: number): Primary {
-  return r < 0.42 ? 'rifle' : r < 0.74 ? 'smg' : r < 0.92 ? 'shotgun' : 'sniper';
+  for (const [id, share] of BOT_PRIMARIES) if ((r -= share) < 0) return id;
+  return 'rifle';
 }
 
 function standings(): Fighter[] {
@@ -113,6 +141,7 @@ function addFighter(game: GameContext, p: Player): Fighter {
     plants: 0,
     defuses: 0,
     primary: p.bot ? botPrimary(game.rng.next()) : 'rifle',
+    sidearm: p.bot && game.rng.next() < 0.3 ? 'revolver' : 'pistol',
     lethal: p.bot && game.rng.next() < 0.35 ? 'molotov' : 'frag',
     outfit,
     team: null,
@@ -123,6 +152,7 @@ function addFighter(game: GameContext, p: Player): Fighter {
     uavUntil: 0,
     uavFor: 0,
     rushUntil: 0,
+    streaks: [],
     firedAt: -99,
     menu: null,
     radar: '',
@@ -212,14 +242,14 @@ function pickSpawn(game: GameContext, me: Player): SpawnPoint {
   return best;
 }
 
-function arm(p: Player, primary: Primary, lethal: Lethal) {
+function arm(p: Player, f: Fighter) {
   const inv = p.inventory;
   inv.clear();
-  inv.give(primary);
-  inv.give('pistol');
+  inv.give(f.primary);
+  inv.give(f.sidearm);
   inv.give('katana');
   // The lethal rides in the fourth slot: thrown with G, never switched to.
-  inv.give(lethal, LETHAL_COUNT[lethal] ?? 1);
+  inv.give(f.lethal, LETHAL_COUNT[f.lethal] ?? 1);
   inv.select(0);
 }
 
@@ -232,7 +262,7 @@ function spawnAt(game: GameContext, f: Fighter, sp: SpawnPoint) {
   p.revive();
   p.health = p.maxHealth;
   p.teleport({ x: sp.x, y: sp.y + 0.05, z: sp.z }, sp.yaw, 0);
-  arm(p, f.primary, f.lethal);
+  arm(p, f);
   p.protect(1.5);
   p.speed = 1;
   f.diedAt = -1;
@@ -255,8 +285,8 @@ function spawn(game: GameContext, f: Fighter) {
 }
 
 /**
- * Whether a fighter may pick this weapon from the loadout (a primary or a lethal). All of them,
- * for now: progression hooks in here.
+ * Whether a fighter may pick this weapon from the loadout (a primary, a sidearm or a lethal). All
+ * of them, for now: progression hooks in here.
  */
 function canPick(_f: Fighter, _item: string): boolean {
   return true;
@@ -268,7 +298,7 @@ function loadoutMenu(game: GameContext, f: Fighter) {
   // Just spawned (or waiting for the round): swap now; otherwise it's for the next life.
   const pick = (name: string) => {
     if (p.alive && (game.clock.now - f.spawnedAt < 5 || (isCase() && rounds.phase === 'prep'))) {
-      arm(p, f.primary, f.lethal);
+      arm(p, f);
       p.hud.toast(`${name} it is`);
     } else p.hud.toast(`${name} next life`);
   };
@@ -287,6 +317,20 @@ function loadoutMenu(game: GameContext, f: Fighter) {
         },
       }),
     ); // [progression] locked: greyed out, refused
+  const sidearms = () =>
+    SIDEARMS.filter((id) => canPick(f, id)).map((id) =>
+      xp.gate(p, id, {
+        icon: feedIcon(id) ?? undefined,
+        label: WEAPONS[id].name,
+        note: BLURBS[id],
+        active: f.sidearm === id,
+        onSelect: () => {
+          f.sidearm = id;
+          f.menu?.update({ sections: sections() });
+          pick(WEAPONS[id].name);
+        },
+      }),
+    ); // [progression]
   const lethals = () =>
     (Object.keys(LETHALS) as Lethal[])
       .filter((id) => canPick(f, id))
@@ -305,10 +349,10 @@ function loadoutMenu(game: GameContext, f: Fighter) {
       ); // [progression]
   // [progression] Outfits (the locked greyed out), and the sections all together.
   const outfits = () => xp.outfits(p, f.outfit, (i) => ((f.outfit = i), f.menu?.update({ sections: sections() })));
-  const sections = () => [{ title: 'Primary', entries: entries() }, { title: 'Lethal (G)', entries: lethals() }, outfits()];
+  const sections = () => [{ title: 'Primary', entries: entries() }, { title: 'Sidearm', entries: sidearms() }, { title: 'Lethal (G)', entries: lethals() }, outfits()];
   f.menu = p.hud.menu({
     title: 'Pick your piece',
-    subtitle: `Level ${xp.level(p)}, more unlocking as you go. Your primary, your lethal and your look; the Lucky 45 and the katana come along regardless.`, // [progression]
+    subtitle: `Level ${xp.level(p)}, more unlocking as you go. Your primary, your sidearm, your lethal and your look; the katana comes along regardless.`, // [progression]
     sections: sections(), // [progression]
     onClose: () => {
       f.menu = null;
@@ -368,11 +412,14 @@ function onDeath(game: GameContext, victim: Player, source: unknown, weapon: str
   const v = fighters.get(victim.id);
   if (!v || match.phase !== 'playing') return;
   const now = game.clock.now;
+  // Killed flying a streak: it's over.
+  streaks.died(victim);
   v.deaths++;
   v.streak = 0;
   v.diedAt = now;
   v.uavUntil = 0;
   boardDirty = true;
+  ammo.drop(victim.position);
   const killer = typeof source === 'object' && source !== null && (source as Player).kind === 'player' ? (source as Player) : null;
   const k = killer && killer !== victim ? fighters.get(killer.id) : undefined;
   const icon = weapon ? killIcon(weapon) : null;
@@ -418,6 +465,8 @@ function onDeath(game: GameContext, victim: Player, source: unknown, weapon: str
       killer.hud.banner('ADRENALINE SHOT', 'Faster and patched up, for fifteen seconds', { color: COLORS.pink, duration: 2 });
       killer.audio.play('heal');
     }
+    // The ones you call in (a free-for-all or Team Deathmatch): the Hellstorm at seven, the chopper at ten.
+    if (streaks.on) for (const id of STREAK_IDS) if (k.streak === STREAKS[id].kills) streaks.earn(k, id);
     game.hud.feed([
       { text: killer.name, color: nameColor(killer, killer.bot ? '#ffe7a3' : COLORS.gold) },
       ...(icon ? [{ icon }] : weapon ? [` ${killName(weapon)} `] : [' ✕ ']),
@@ -427,7 +476,7 @@ function onDeath(game: GameContext, victim: Player, source: unknown, weapon: str
     ]);
     victim.hud.banner('KILLED BY', `${killer.name}${weapon ? ` · ${killName(weapon)}` : ''}${headshot ? ' · headshot' : ''}${through > 0 ? ' · through the wall' : ''}`, { color: COLORS.red, duration: RESPAWN - 0.3 });
     // KILLCAM hook (killcam.ts): the victim sees it again through the killer's eyes, then respawns.
-    killcam(game, victim, killer, weapon, headshot, through);
+    killcam(game, victim, killer, weapon, headshot, through, streaks.killcamView(victim, killer, weapon));
     // (Hook: whatever else counts a kill, progression say, hears of it here: `k` got `points`.)
     // The mode's score.
     if (match.mode.id === 'ffa' && k.kills >= FFA_LIMIT) endMatch(game, killer);
@@ -456,12 +505,15 @@ function endMatch(game: GameContext, winner: Player | null, team?: Team) {
   if (match.phase === 'over') return;
   match.phase = 'over';
   overAt = game.clock.now;
+  streaks.reset();
   const table = standings();
   const teams = match.mode.teams;
   // A team match with no winner named (the clock ran out): the side ahead, if any.
   const won: Team | null = team ?? (teams && match.score[0] !== match.score[1] ? (match.score[0] > match.score[1] ? 0 : 1) : null);
   const top = winner ?? table[0]?.player ?? null;
   if (isCase()) rounds.end();
+  // Played out: any vote to skip it goes.
+  vote.reset();
   // [progression] Each fighter's place, and whether they won (their side, in a team mode).
   xp.matchOver(table.map((f, i) => ({ player: f.player, place: i + 1, won: teams ? f.team === won : f.player === top })));
   for (const f of fighters.values()) {
@@ -486,7 +538,7 @@ function endMatch(game: GameContext, winner: Player | null, team?: Team) {
     p.hud.toast(`All time: ${s.wins} wins · ${s.kills} kills · best streak ${s.best}`);
   }
   // What's next: the rotation's next match in a public room; the same again in one's own.
-  if (game.room === 'public') plan = ROTATION[++turn % ROTATION.length];
+  plan = nextPlan(game);
   game.audio.play('match_end');
   scoreboard(game, true);
 }
@@ -658,8 +710,10 @@ function personalHud(game: GameContext, f: Fighter, dt: number) {
     teamColor: teams ? TEAMS[f.team!].color : '',
     role: isCase() && teams ? (f.team === rounds.attackers ? 'Attacking' : 'Defending') : 'Team',
     carrier: isCase() && rounds.carrier === f ? 'Hold F at A or B' : '',
-    pips: streakPips(f.streak),
-    extra: Math.max(0, f.streak - 5),
+    pips: streakPips(f.streak, streaks.on),
+    pipsClass: streaks.on ? 'long' : '',
+    extra: Math.max(0, f.streak - (streaks.on ? STREAKS.chopper.kills : 5)),
+    ready: streaks.ready(f),
     uav: Math.max(0, Math.ceil(f.uavUntil - now)),
     uavFor: f.uavFor,
     rush: Math.max(0, Math.ceil(f.rushUntil - now)),
@@ -673,7 +727,9 @@ function personalHud(game: GameContext, f: Fighter, dt: number) {
   const key = `${uav}|${friends.map((b) => b.player.id).join(',')}|${foes.map((b) => b.player.id).join(',')}`;
   if (key !== f.radar) {
     f.radar = key;
+    // Top right, under their dossier (its streak and what the streak's earned).
     p.hud.radar({
+      at: 'top-right',
       center: p,
       range: 48,
       blips: [...friends.map((e) => ({ at: e.player, color: TEAMS[f.team!].color, size: 4 })), ...foes.map((e) => ({ at: e.player, color: uav ? COLORS.pink : COLORS.red, size: 5 }))],
@@ -703,16 +759,55 @@ function spectate(f: Fighter) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// Choosing the match: a public room goes round the rotation; a room of one's own picks (M)
+// Choosing the match: a public room goes round the rotation; a room of one's own picks (M); in
+// either, the people in it can vote to skip the match that's on (V)
 // -------------------------------------------------------------------------------------------------
+
+/**
+ * What's on after this match: in a public room the rotation's next; in a room of one's own the
+ * same again (M picks another), unless this one's being skipped, when it's the one after it in
+ * the rotation.
+ */
+function nextPlan(game: GameContext, skipping = false): MatchPlan {
+  if (game.room === 'public') return ROTATION[++turn % ROTATION.length];
+  if (!skipping) return plan;
+  const at = ROTATION.findIndex((m) => m.mode === match.mode.id && m.map === match.map.id);
+  return ROTATION[(at + 1) % ROTATION.length];
+}
+
+/**
+ * The vote to skip passed (skipvote.ts): the match is over without being played out. Nobody wins
+ * or places, and nothing goes on anyone's all-time numbers. Everyone stops where they are, and a
+ * few seconds later the next match is on, the one that would have followed this (the
+ * intermission's countdown, cut short).
+ */
+function skipMatch(game: GameContext) {
+  if (match.phase === 'over') return;
+  const was = planName({ mode: match.mode.id, map: match.map.id });
+  match.phase = 'over';
+  skipped = true;
+  overAt = game.clock.now - (INTERMISSION - SKIP_PAUSE);
+  if (isCase()) rounds.end();
+  xp.matchOver([]); // [progression] no placing in a match skipped (what was earned in it is kept)
+  for (const f of fighters.values()) {
+    f.player.freeze(true);
+    f.menu?.close();
+    f.player.hud.progress(null);
+  }
+  plan = nextPlan(game, true);
+  game.hud.banner('SKIPPED', `The vote's in · next up: ${planName(plan)}`, { color: COLORS.gold, duration: SKIP_PAUSE - 0.3 });
+  game.hud.feed([`The vote passed: ${was} skipped`]);
+  game.audio.play('match_end');
+}
 
 /** The menu's pictures: each mode's weapon, each map's own block. */
 const MODE_ICONS: Record<ModeId, IconRef> = { ffa: { item: 'pistol', view: 'side' }, tdm: { item: 'rifle', view: 'side' }, case: { item: 'briefcase' } };
-const MAP_ICONS: Record<string, IconRef> = { jackrabbit: { block: 'neon_cyan' }, kahuna: { block: 'thatch' } };
+const MAP_ICONS: Record<string, IconRef> = { jackrabbit: { block: 'neon_cyan' }, kahuna: { block: 'thatch' }, hijacked: { block: 'porthole' } };
 
 function matchMenu(game: GameContext, p: Player) {
   if (game.room === 'public') {
-    p.hud.toast(`Public games go round the modes and maps · next: ${planName(plan)}`);
+    // (`plan` is the match on now: the next is the rotation's after it.)
+    p.hud.toast(`Public games go round the modes and maps · next: ${planName(ROTATION[(turn + 1) % ROTATION.length])} · V votes to skip this one`);
     return;
   }
   if (settings?.open) return;
@@ -767,20 +862,30 @@ export default defineServer(shared, {
     turn = 0;
     offered = false;
     settings = null;
+    skipped = false;
     watching.clear();
     defineArt(game);
     defineWeapons(game);
     defineBriefcase(game);
+    ammo = new AmmoBags(game);
     // [progression] XP, levels and unlocks: before the game's own listeners (the kill that ends a match still counts).
     xp = setupProgression(game);
     // (Its voices are each screen's, `client/sounds.ts`: played here by name.)
     game.hud.define('dossier', DOSSIER);
     game.hud.define('matchbar', MATCHBAR);
+    game.hud.define('skipvote', SKIPVOTE);
     // Each map's walking grid (built once its blocks are here, kept up with holes and breaks), and
     // the bots on whichever the match is on.
     navs = new Map(MAPS.map((m) => [m.id, navGrid(game, { bounds: m.bounds })]));
     bots = makeBots(game, () => navs.get(match.map.id) ?? null, hotspots);
+    bots.supplies = ammo;
     rounds = new CaseRounds(game, { spawnAt: (f, at) => spawnAt(game, f, at), award, endMatch: (t) => endMatch(game, null, t) });
+    streaks = new Streaks(game, { bots, award });
+    bots.aloft = (p) => streaks.aloft(p);
+    streaks.setup();
+    // (Development: tests reach the match and the streaks.)
+    if (import.meta.env.DEV) (globalThis as unknown as { __cob: unknown }).__cob = { match, streaks };
+    vote = new SkipVote(game, { color: (p) => nameColor(p, COLORS.gold), skip: () => skipMatch(game) });
     game.events.on('playerJoin', ({ player }) => {
       const f = fighters.get(player.id) ?? addFighter(game, player);
       if (player.bot) bots.add(player as Bot, 0.3 + game.rng.next() * 0.5);
@@ -789,6 +894,8 @@ export default defineServer(shared, {
         if (running) loadoutMenu(game, f);
         balanceBots(game);
         game.hud.feed([{ text: player.name, color: nameColor(player, COLORS.gold) }, ` rolled into ${match.map.name}`]);
+        // One more to count in a vote to skip.
+        vote.joined(player);
       }
     });
     game.events.on('playerReady', ({ player }) => {
@@ -800,19 +907,26 @@ export default defineServer(shared, {
       f?.menu?.close();
       fighters.delete(player.id);
       watching.delete(player.id);
+      streaks.died(player);
       bots.remove(player);
       boardDirty = true;
       if (f && isCase()) rounds.left(f);
       if (!player.bot) balanceBots(game);
+      // Their vote to skip goes, and the rest are counted again (last: it may end the match).
+      vote.left(player);
     });
     game.events.on('playerDeath', ({ player, source, weapon, headshot, through }) => onDeath(game, player, source, weapon, !!headshot, through ?? 0));
-    game.events.on('shot', ({ player }) => {
+    game.events.on('shot', ({ player, weapon, from, dir }) => {
       const f = fighters.get(player.id);
       if (f) f.firedAt = game.clock.now;
+      // Up at a chopper: its hits count against it.
+      streaks.shot(player, weapon, from, dir);
     });
     // No friendly fire in a team mode (your own frag still hurts you).
     game.events.on('damage', (hit) => {
       const by = hit.source;
+      // A streak's blast spares its pilot.
+      if (selfHarm(hit.weapon, hit.target, by)) return hit.cancel();
       if (!match.mode.teams || !by || by === 'world' || by.kind !== 'player' || hit.target.kind !== 'player' || by === hit.target) return;
       if (!hostile(by, hit.target)) hit.cancel();
     });
@@ -831,6 +945,24 @@ export default defineServer(shared, {
         }
         return `${g.players.length} fighters`;
       },
+    });
+    game.commands.register('streak', {
+      usage: '<hellstorm|chopper>',
+      help: 'Earn a killstreak now (call it in with 5)',
+      cheat: true,
+      run: ([id], _g, p) => {
+        const f = fighterOf(p);
+        if (!f || !id || !(STREAK_IDS as string[]).includes(id)) return `streaks: ${STREAK_IDS.join(', ')}`;
+        if (!streaks.on) return 'streaks are for the free-for-all and Team Deathmatch';
+        streaks.earn(f, id as (typeof STREAK_IDS)[number]);
+        return `${STREAKS[id as (typeof STREAK_IDS)[number]].name} ready: press 5`;
+      },
+      complete: () => [...STREAK_IDS],
+    });
+    // The vote to skip, typed (V does the same): everyone's, not a cheat.
+    game.commands.register('skip', {
+      help: 'Vote to skip this match (its mode and map); again to take your vote back',
+      run: (_a, _g, p) => vote.toggle(p) ?? undefined,
     });
     game.commands.register('win', { help: 'End the match now', cheat: true, run: (_a, g, p) => endMatch(g, p, match.mode.teams ? (fighterOf(p)?.team ?? 0) : undefined) });
     game.commands.register('team', {
@@ -856,7 +988,7 @@ export default defineServer(shared, {
       },
     });
     game.commands.register('mode', {
-      usage: '<ffa|tdm|case> [jackrabbit|kahuna]',
+      usage: '<ffa|tdm|case> [jackrabbit|kahuna|hijacked]',
       help: 'Start a match of this mode (on this map)',
       cheat: true,
       run: ([m, where], g) => {
@@ -873,6 +1005,9 @@ export default defineServer(shared, {
     xp.matchStart(); // [progression]
     running = true;
     match.phase = 'playing';
+    skipped = false;
+    // A new match: no votes to skip it yet (they open a few seconds in).
+    vote.reset();
     // The match planned: its mode, its map (the bots' grid and hotspots with it).
     match.mode = MODES[plan.mode];
     match.map = mapById(plan.map) ?? MAPS[0];
@@ -887,9 +1022,11 @@ export default defineServer(shared, {
     briefcase = null;
     bots.objective = null;
     watching.clear();
+    streaks.reset();
+    ammo.clear();
     nextBriefcase = game.clock.now + 35;
     for (const f of fighters.values()) {
-      Object.assign(f, { kills: 0, deaths: 0, score: 0, streak: 0, best: 0, headshots: 0, plants: 0, defuses: 0, diedAt: -1, uavUntil: 0, uavFor: 0, rushUntil: 0, firedAt: -99, radar: '', multi: 0 });
+      Object.assign(f, { kills: 0, deaths: 0, score: 0, streak: 0, best: 0, headshots: 0, plants: 0, defuses: 0, diedAt: -1, uavUntil: 0, uavFor: 0, rushUntil: 0, streaks: [], firedAt: -99, radar: '', multi: 0 });
     }
     for (const p of game.players) if (!fighters.has(p.id)) addFighter(game, p);
     if (match.mode.teams) formTeams(game);
@@ -925,10 +1062,19 @@ export default defineServer(shared, {
     const between = isCase() && (rounds.phase === 'prep' || rounds.phase === 'post');
     bots.update(dt, match.phase !== 'playing' || between);
     if (isCase() && match.phase === 'playing') rounds.driveBots(bots);
+    // Killstreaks: calling them in (5), flying them, bots firing up at choppers.
+    streaks.update(dt);
+    // The vote to skip (V), people's only: a vote that carries it ends the match here.
+    for (const p of game.players) {
+      if (p.bot || !p.input.pressed('KeyV')) continue;
+      const no = vote.toggle(p);
+      if (no) p.hud.toast(no);
+    }
 
     if (match.phase === 'over') {
       if (now - overAt > INTERMISSION) game.restart();
-      else if (Math.floor(now) !== lastSecond) {
+      // (A match skipped has no final scores to show: its banner says what's next.)
+      else if (!skipped && Math.floor(now) !== lastSecond) {
         lastSecond = Math.floor(now);
         scoreboard(game, true);
       }
@@ -953,7 +1099,8 @@ export default defineServer(shared, {
         p.speed = 1;
       }
       const q = p.position;
-      if (q.y < match.map.bounds.min.y - 4) p.damage(1000, { source: 'world', knockback: 0 });
+      // Fallen out of the map, or overboard.
+      if (q.y < (match.map.sea ?? match.map.bounds.min.y - 4)) p.damage(1000, { source: 'world', knockback: 0 });
       if (!p.bot) {
         if (p.input.pressed('KeyL')) loadoutMenu(game, f);
         personalHud(game, f, dt);
@@ -962,6 +1109,7 @@ export default defineServer(shared, {
 
     if (isCase()) rounds.update(dt);
     else updateBriefcase(game);
+    ammo.update();
     if (match.phase !== 'playing') return;
     // The clock.
     const left = TIME_LIMIT[match.mode.id] - (now - startedAt);

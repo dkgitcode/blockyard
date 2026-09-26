@@ -1,6 +1,7 @@
-import type { HoldSpec, HoldStyle, ItemDefinition, ViewAnimation } from '@platform';
+import type { HoldSpec, HoldStyle, ViewAnimation } from '@platform';
 import type { Client, ClientEvent, ClientKit, HeldItem, HumanoidViewArms, Node, ViewArm } from '@platform/client';
 import { Euler, MathUtils, Quat, Vec3 } from '@platform/client/math';
+import type { BowOwn, MeleeOwn } from '@platform/items';
 import { BUILTIN, compile, pyr, type Anim, type Motion } from './anims';
 import { ARM_FIT, fitArms, placeBent, placeStraight, upperFor, wristFor, type ArmFit } from './arms';
 import { gunPoints, isCompact, sameSpec, type GunPoints } from './points';
@@ -54,10 +55,13 @@ type Shown =
 /** How far past the muzzle the flash sits, in the model's blocks (a pixel). */
 const FLASH_AHEAD = 1 / 16;
 
-/** The style an item's held in when its hold doesn't say: by its kind. */
-function styleFor(def: ItemDefinition | undefined): HoldStyle {
-  const kind = def?.kind;
-  return kind === 'melee' ? 'sword' : kind === 'bow' ? 'bow' : kind === 'gun' ? 'gun' : kind === 'throwable' ? 'throw' : 'item';
+/** The style an item of each kind is held in when its hold doesn't say (a kind not here: `item`). */
+export const KIND_STYLES: Readonly<Record<string, HoldStyle>> = { melee: 'sword', bow: 'bow', gun: 'gun', throwable: 'throw' };
+
+/** The first-person kit's options. */
+export interface FirstPersonOptions {
+  /** The style items of a kind are held in when their hold doesn't say, over `KIND_STYLES`: a game's own kinds (`{ grapple: 'gun' }`). */
+  styles?: Record<string, HoldStyle>;
 }
 
 const _v = new Vec3();
@@ -70,9 +74,16 @@ const _fc = new Vec3();
 
 export class FirstPersonKit implements ClientKit {
   readonly name = 'firstPerson';
+  /** The style each kind of item is held in when its hold doesn't say (`KIND_STYLES`, and a game's own kinds). */
+  readonly styles: Readonly<Record<string, HoldStyle>>;
+
+  constructor(opts: FirstPersonOptions = {}) {
+    this.styles = { ...KIND_STYLES, ...opts.styles };
+  }
+
   /** Debug: slow motion (0 freezes it). */
   timeScale = 1;
-  /** Bow draw 0..1 (from `me.hand`). */
+  /** Bow draw 0..1 (the bow kit's `me.items.bow`). */
   draw = 0;
 
   private client!: Client;
@@ -186,9 +197,11 @@ export class FirstPersonKit implements ClientKit {
       this.take(now);
     }
     // A bow drawn far enough shows its drawn look.
-    if (now?.def?.kind === 'bow') now.alternate(me.hand.drawing && me.hand.charge > 0.25);
+    // (The bow kit's word on the draw: `me.items.bow`.)
+    const bow = me.items.bow as BowOwn | undefined;
+    if (now?.def?.kind === 'bow') now.alternate(!!bow?.drawing && bow.charge > 0.25);
     const gun = me.held ? (me.held.state as unknown as GunView) : undefined;
-    this.draw = me.hand.drawing ? me.hand.charge : 0;
+    this.draw = bow?.drawing ? bow.charge : 0;
     this.update(dt, gun);
     // Aiming down the sights zooms the world's view.
     const zoom = me.held?.state.zoom;
@@ -342,7 +355,7 @@ export class FirstPersonKit implements ClientKit {
       this.pending = { kind: 'block', item: h, cross: h.form === 'cross' };
       return;
     }
-    const fallback = styleFor(h.def);
+    const fallback = h.def && Object.hasOwn(this.styles, h.def.kind) ? this.styles[h.def.kind] : 'item';
     // Held as a model (boxes or glTF), posed by its grip; else as its sprite.
     const hold: HoldSpec = h.model ? { ...h.def?.hold, model: h.model } : (h.def?.hold ?? {});
     const style = hold.style ?? fallback;
@@ -742,7 +755,9 @@ export class FirstPersonKit implements ClientKit {
     const l = this.side;
 
     // Minecraft's hand height: dips to swap items, and after each hit as the attack recharges.
-    const target = this.pending ? 0 : Math.max(0, Math.min(1, me.hand.strength)) ** 3;
+    // (The melee kit's word on the swing's readiness: `me.items.melee`; full without one.)
+    const strength = (me.items.melee as MeleeOwn | undefined)?.strength ?? 1;
+    const target = this.pending ? 0 : Math.max(0, Math.min(1, strength)) ** 3;
     this.height += MathUtils.clamp(target - this.height, -8 * dt, 8 * dt);
     if (this.pending && this.height < 0.1) {
       this.apply(this.pending);

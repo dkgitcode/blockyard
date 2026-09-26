@@ -1,4 +1,4 @@
-import type { MiscItem } from '@platform';
+import type { ItemDefinition } from '@platform';
 
 /**
  * Items no one carries: the heroes' effect models (glowing beams, `tools/fx.mjs`), defined so each
@@ -11,4 +11,4 @@ export type FxBeam = (typeof FX_BEAMS)[number];
 /** The item a beam is. */
 export const fxItem = (beam: FxBeam) => `bfh_fx_${beam}`;
 
-export const FX_ITEMS: Record<string, MiscItem> = Object.fromEntries(FX_BEAMS.map((b) => [fxItem(b), { kind: 'misc', name: `(effect: ${b})` }]));
+export const FX_ITEMS: Record<string, ItemDefinition> = Object.fromEntries(FX_BEAMS.map((b) => [fxItem(b), { kind: 'misc', name: `(effect: ${b})` }]));

@@ -46,10 +46,14 @@ export interface SaberPose {
 
 const K = (p: V3, tip: number, turn: number, two: number, twist = 0, lean = 0): SaberKey => ({ p, tip, turn, two, twist, lean });
 
-/** Each hero's ready stance: Luke two-handed, blade up; Ben's pointed at them; the Sith's low at their side. */
+/**
+ * Each hero's ready stance: Luke two-handed at his right hip, blade up; Ben's out to his right,
+ * pointed at them; the Sith's low at their side. All out to the right, where the camera over the
+ * shoulder sees them.
+ */
 const GUARD: Record<HeroId, SaberKey> = {
-  luke: K([-0.2, -0.34, 0.26], -0.82, 0.42, 1, -0.2),
-  ben: K([-0.17, -0.24, 0.3], -0.42, 0.14, 0, -0.25),
+  luke: K([-0.3, -0.33, 0.18], -1.28, -0.62, 1, -0.22),
+  ben: K([-0.3, -0.24, 0.28], -0.58, -0.42, 0, -0.18),
   vader: K([-0.3, -0.44, 0.2], 0.55, -0.22, 0, -0.05, -0.02),
   emperor: K([-0.28, -0.46, 0.18], 0.85, -0.3, 0, -0.1, 0.14),
 };

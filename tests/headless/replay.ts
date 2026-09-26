@@ -113,7 +113,7 @@ function history() {
     }
   }
   const calls = wire.steps.reduce((n, s) => n + (s.e?.filter((e) => e.t === 'call').length ?? 0), 0);
-  const shots = wire.steps.reduce((n, s) => n + (s.e?.filter((e) => e.t === 'call' && e.call.method === '$shot').length ?? 0), 0);
+  const shots = wire.steps.reduce((n, s) => n + (s.e?.filter((e) => e.t === 'call' && e.call.method === 'gun.shot').length ?? 0), 0);
   check(calls > 0, 'what was shown came along');
   check(wire.steps.every((s) => (s.e ?? []).every((e) => e.t !== 'call' || e.call.target !== 'hud')), 'no HUD calls in a replay');
 
@@ -221,7 +221,7 @@ function killcam() {
   if (natural) {
     const n = natural as ReplayWire;
     check(n.follow === by, 'a bot that got them: through its eyes');
-    const shots = n.steps.flatMap((s) => s.e ?? []).filter((e) => e.t === 'call' && e.call.method === '$shot' && (e.call.args[0] as { by: string }).by === by).length;
+    const shots = n.steps.flatMap((s) => s.e ?? []).filter((e) => e.t === 'call' && e.call.method === 'gun.shot' && (e.call.args[0] as { by: string }).by === by).length;
     console.log(`  a death in the match: through ${g.players.find((p) => p.id === by)?.name ?? by}'s eyes, their ${shots} shots in it`);
   } else console.log('  (no bot killed the idle player in 90 s)');
 }
@@ -284,6 +284,8 @@ function leaving() {
   const bob = r.join('Bob');
   r.step(60);
   const annP = r.player(ann);
+  // (Bob kept out of harm's way: a bot's kill would give him a kill cam of his own.)
+  r.player(bob).protect(9999);
   annP.damage(1000, { source: r.player(bob), weapon: 'rifle', knockback: 0 });
   r.step(20);
   const got = r.replays(ann);
@@ -298,6 +300,7 @@ function leaving() {
   check(r.game.players.every((p) => p.id !== ann), 'Ann is gone');
   // Bob is killed by a bot: his own kill cam works on.
   const bot = r.game.players.find((p) => p.bot && p.alive)!;
+  r.player(bob).protect(0);
   r.player(bob).damage(1000, { source: bot, weapon: 'smg', knockback: 0 });
   r.step(20);
   check(r.replays(bob).length === 1, 'Bob gets his');

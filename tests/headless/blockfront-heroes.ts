@@ -3,6 +3,7 @@ import type { PlayerInput } from '../../src/platform/net/protocol';
 import { HERO_ABILITY, type HeroMove } from '../../src/games/blockfront/heroes/abilities';
 import { HEROES, type HeroId } from '../../src/games/blockfront/heroes/defs';
 import { match } from '../../src/games/blockfront/match';
+import type { Sabers } from '../../src/games/blockfront/heroes/saber';
 import type { Team } from '../../src/games/blockfront/teams';
 import { check, launch } from './_harness';
 
@@ -306,6 +307,38 @@ export default function blockfrontHeroes() {
   console.log(`  bots: ${[...used].map(([id, s]) => `${HEROES[id as HeroId].name}: ${[...s].join(', ')}`).join('; ') || 'none'} (${powers} power messages, ${swings} swings)`);
   check(used.size >= 3 && [...used.values()].reduce((n, s) => n + s.size, 0) >= 6, 'hero bots should use their powers');
   check(swings > 5, 'hero bots should swing their sabers');
+  // ---- A hurt hero bot falls back to the nearest post its side holds (and survives the trip here: protected).
+  const fb = [...match.fighters.values()].find((f) => f.player.bot && f.hero && f.player.alive);
+  check(fb, 'a hero bot should be alive to test falling back');
+  const post = () =>
+    match.posts
+      .filter((p) => p.owner === fb.team)
+      .map((p) => Math.hypot(p.spec.at.x - fb.player.position.x, p.spec.at.z - fb.player.position.z))
+      .sort((a, b) => a - b)[0] ?? Infinity;
+  fb.player.health = fb.player.maxHealth * 0.18;
+  fb.player.protect(30);
+  const far = post();
+  let nearest = far;
+  h.run(12, { pilot: () => ({ yaw: me.yaw, pitch: me.pitch }), until: () => ((nearest = Math.min(nearest, post())), nearest < 5) });
+  console.log(`  falling back: ${HEROES[fb.hero!].name} at ${Math.round((fb.player.health / fb.player.maxHealth) * 100)}%, ${far.toFixed(0)} blocks from its side's nearest post, then ${nearest.toFixed(0)}`);
+  check(far < 5 || nearest < far * 0.6, `a hurt hero bot should fall back toward its post (${far.toFixed(1)} -> ${nearest.toFixed(1)})`);
+  // Shot while falling back: it turns to the shooter, guard up.
+  const foe = g.players.find((p) => p.alive && match.fighters.get(p.id)?.team !== fb.team && p !== me);
+  check(foe, 'someone to shoot the hero bot');
+  fb.player.protect(0);
+  fb.player.health = fb.player.maxHealth * 0.2;
+  let guarded = 0;
+  let ticks = 0;
+  h.run(2, {
+    pilot: () => ({ yaw: me.yaw, pitch: me.pitch }),
+    until: () => {
+      if (ticks++ % 12 === 0 && fb.player.alive) fb.player.damage(2, { source: foe, cause: 'gun', weapon: 'imp_rifle', part: 'body' });
+      if (g.items.kind<Sabers>('saber')?.guarding(fb.player)) guarded++;
+      return false;
+    },
+  });
+  console.log(`  shot while falling back: guard up ${guarded} of ${ticks} steps`);
+  check(guarded > 10, 'a hero bot falling back should raise its guard when shot');
   console.log(`  ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   void (g as GameContext);
 }

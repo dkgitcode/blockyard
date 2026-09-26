@@ -1,26 +1,32 @@
 import type { Bot, GameContext, Player, Vec3 } from '@platform';
+import type { AmmoBags } from './ammo';
 import { shooterBots, throwables, type BotMind, type BotWeapon, type NavGrid, type ShooterBots } from '@platform/kits';
 import { LETHALS } from './weapons';
 
 /**
  * Bot fighters: the platform's shooter bots (`shooterBots`, whose defaults are tuned to how they
  * fight here), told how each of our weapons is fought with. They hold the range their gun likes,
- * rush in with the shotgun and SMG, stay down the scope with the Honey Bunny, and go to the Lucky
- * 45 when the primary runs dry up close. When someone they were fighting ducks out of sight, they
+ * rush in with the shotguns and SMGs, stay down the scope with Ezekiel and the Honey Bunny, and go
+ * to their sidearm when the primary runs dry up close. When someone they were fighting ducks out of sight, they
  * lob their lethal after them (the better ones cook a frag first).
  *
  * What they're after is the mode's (`rules`, set by the server for each match): who's fair game
  * (everyone in a free-for-all, the other side in a team mode), and where to go when nobody's in
  * sight (the briefcase when it's out on the street, the better ones more often; in The Briefcase,
- * the sites, the case and its carrier). Otherwise they roam the map's walking grid (`nav`, the map
- * being played) toward its hotspots.
+ * the sites, the case and its carrier; the nearest ammo bag when they're low on rounds).
+ * Otherwise they roam the map's walking grid (`nav`, the map being played) toward its hotspots.
  */
 const WEAPONS: Record<string, BotWeapon> = {
   rifle: { range: 16 },
   smg: { range: 8, rush: true },
+  tommy: { range: 10, rush: true },
   shotgun: { range: 4, ads: false, rush: true },
+  sawnoff: { range: 3.5, ads: false, rush: true },
+  lmg: { range: 18, ads: 10 },
+  marksman: { range: 26, ads: true, steady: true },
   sniper: { range: 32, ads: true, steady: true },
   pistol: { range: 11 },
+  revolver: { range: 11 },
   katana: { range: 1.5, rush: true },
 };
 
@@ -41,6 +47,10 @@ export interface Bots extends ShooterBots {
   objective: Vec3 | null;
   /** The mode's rules (null: everyone's fair game, and the objective). */
   rules: BotRules | null;
+  /** The ammo bags lying about: a bot low on rounds goes for the nearest. */
+  supplies: AmmoBags | null;
+  /** Whether someone's up in a chopper (off the ground: nobody's target). */
+  aloft: ((p: Player) => boolean) | null;
 }
 
 /**
@@ -53,12 +63,15 @@ export function makeBots(game: GameContext, nav: () => NavGrid | null, hotspots:
       nav,
       hotspots,
       weapons: WEAPONS,
-      hostile: (bot, other) => bots.rules?.hostile(bot, other) ?? true,
+      // (Nobody's after someone up in a chopper: they shoot up at the chopper, `streaks`.)
+      hostile: (bot, other) => !bots.aloft?.(other) && (bots.rules?.hostile(bot, other) ?? true),
       goal: (bot, mind) => {
         if (bots.rules) {
           const g = bots.rules.goal(bot, mind);
           if (g) return g;
         }
+        const bag = bots.supplies?.low(bot) ? bots.supplies.nearest(bot.position) : null;
+        if (bag) return bag;
         return bots.objective && mind.skill > 0.5 !== Math.random() < 0.3 ? bots.objective : null;
       },
       throw: (bot, at, mind) => {
@@ -80,7 +93,7 @@ export function makeBots(game: GameContext, nav: () => NavGrid | null, hotspots:
         return throwables.of(game)?.throw(bot, item, { at, cook: item === 'frag' ? mind.skill * 1.4 : 0 }) ?? false;
       },
     }),
-    { objective: null as Vec3 | null, rules: null as BotRules | null },
+    { objective: null as Vec3 | null, rules: null as BotRules | null, supplies: null as AmmoBags | null, aloft: null as ((p: Player) => boolean) | null },
   );
   return bots;
 }

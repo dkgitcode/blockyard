@@ -1,5 +1,6 @@
-import { Models, type Bot, type GameContext, type ItemDefinition, type ItemKit, type Player } from '@platform';
+import { Models, type Bot, type GameContext, type ItemDefinition, type ItemKit, type Player, type Vec3 } from '@platform';
 import type { BotMind, BotWeapon } from '@platform/kits';
+import type { BotHooks } from '../bots';
 import { HERO_MODELS } from '../models';
 import { STYLE } from '../style';
 import type { Team } from '../teams';
@@ -32,6 +33,8 @@ import { MSG, p3, type Clash, type Cut, type Deflects } from './wire';
 export interface HeroRules {
   teamOf(p: Player): Team | null;
   hostile(a: Player, b: Player): boolean;
+  /** Where a hurt hero falls back to (the nearest post their side holds), if anywhere. */
+  retreat?(p: Player): Vec3 | null;
 }
 
 export interface Heroes {
@@ -49,6 +52,8 @@ export interface Heroes {
   botWeapons: Record<string, BotWeapon>;
   /** A hero bot's own moves in a fight (powers, blocking), each tick of it. */
   botFight(bot: Bot, mind: BotMind, distance: number): void;
+  /** All the bots' hooks the heroes give (`makeBots`): their weapons, their fighting, falling back when hurt. */
+  readonly botHooks: BotHooks;
   /** The powers at work (for tests, and bots). */
   readonly powers: Powers;
 }
@@ -94,14 +99,15 @@ export function setupHeroes(game: GameContext, rules: HeroRules): Heroes {
     },
   });
 
-  const bots = heroBots(game, { heroOf, hostile: rules.hostile, powers, sabers: kind });
+  const bots = heroBots(game, { heroOf, hostile: rules.hostile, powers, sabers: kind, retreat: (p) => rules.retreat?.(p) ?? null });
+  const botWeapons: Record<string, BotWeapon> = Object.fromEntries(HERO_IDS.map((id) => [saberOf(id), { range: 1.8, rush: true }]));
 
   const configure = () =>
     kind()?.configure({
       hostile: rules.hostile,
       hero: (p) => who.has(p.id),
-      damage: (p) => (powers.rage(p) ? 1.4 : 1),
-      pace: (p) => (powers.rage(p) ? 0.75 : 1),
+      damage: (p) => (powers.rage(p) ? POWERS.rage.damage : 1),
+      pace: (p) => (powers.rage(p) ? POWERS.rage.pace : 1),
       busy: (p) => powers.busy(p) || powers.held(p),
       unguarded: (p) => powers.unguarded(p) || powers.held(p),
       cut(by, target) {
@@ -173,6 +179,14 @@ export function setupHeroes(game: GameContext, rules: HeroRules): Heroes {
   });
   game.events.on('playerDamage', ({ player }) => {
     if (who.has(player.id)) hurtAt.set(player.id, game.clock.now);
+  });
+  // Someone new on the scene: which heroes have their guard up (the powers tell them the rest).
+  game.events.on('playerReady', ({ player: to }) => {
+    const k = kind();
+    for (const id of who.keys()) {
+      const p = game.players.find((q) => q.id === id);
+      if (p && k?.guarding(p)) game.clients.send(to, MSG.guard, { p: id, on: true });
+    }
   });
 
   return {
@@ -260,7 +274,14 @@ export function setupHeroes(game: GameContext, rules: HeroRules): Heroes {
         deflects = [];
       }
     },
-    botWeapons: Object.fromEntries(HERO_IDS.map((id) => [saberOf(id), { range: 1.8, rush: true }])),
+    botWeapons,
     botFight: (bot, mind) => bots.fight(bot, mind),
+    botHooks: {
+      weapons: botWeapons,
+      fight: (bot, mind) => bots.fight(bot, mind),
+      goal: (bot) => bots.goal(bot),
+      ignore: (bot, other) => bots.ignore(bot, other),
+      after: (brains) => bots.after(brains),
+    },
   };
 }

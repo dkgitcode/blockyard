@@ -407,6 +407,7 @@ export class Presentation {
       center: this.anchor(d.center),
       heading: d.heading,
       range: d.range,
+      ...(d.at && { at: d.at }),
       blips: d.blips.map((b) => ('at' in b ? { at: this.anchor(b.at), color: b.color, size: b.size } : { x: b.x, z: b.z, y: b.y, color: b.color, size: b.size })),
     };
   }

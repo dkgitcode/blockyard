@@ -1,4 +1,5 @@
-import type { GameContext, GunItem, IconRef, ItemDefinition, ThrowableItem } from '@platform';
+import type { GameContext, IconRef, ItemDefinition } from '@platform';
+import type { GunItem, ThrowableItem } from '@platform/items';
 import type { Team } from './teams';
 
 /**

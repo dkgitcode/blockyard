@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { defineGame, type GunItem, type IconRef, type ItemDefinition, type ItemLook, type SynthVoice } from '../../src/platform';
+import { defineGame, type IconRef, type ItemDefinition, type ItemLook, type SynthVoice } from '../../src/platform';
+import type { GunItem } from '../../src/platform/items';
 import type { Client } from '../../src/platform/api/client';
 import { ClientRuntime } from '../../src/platform/client/api/client';
 import { Presenter, soundOf } from '../../src/platform/client/present';
@@ -12,7 +13,7 @@ import { sounds } from '../../src/platform/client-kits';
 import cob from '../../src/games/callofblocky/client';
 import { LOOKS } from '../../src/games/callofblocky/client/looks';
 import cobServer from '../../src/games/callofblocky/server';
-import { LETHALS, WEAPONS } from '../../src/games/callofblocky/weapons';
+import { LETHALS, PRIMARIES, SIDEARMS, WEAPONS } from '../../src/games/callofblocky/weapons';
 import { check } from './_harness';
 import type { SynthKit } from '../../src/platform/api/types';
 
@@ -78,11 +79,11 @@ function merging() {
   const frag = screen.items.get('frag') as ItemDefinition & { trail?: string };
   check(frag.trail === '#fa0' && frag.sounds?.draw === 'pin' && (frag.icon as { gltf: string }).gltf === '/frag.glb', 'a look given before the item comes is waiting for it');
   // The server defines it again (a restart): the look stays.
-  screen.apply({ kind: 'item', name: 'rifle', def: { ...RIFLE, rpm: 700 } });
+  screen.apply({ kind: 'item', name: 'rifle', def: { ...RIFLE, rpm: 700 } as ItemDefinition });
   const again = screen.items.get('rifle') as GunItem;
   check(again.rpm === 700 && again.tracer === '#f0f' && again.hold?.gun?.ads === 0.4, 'a definition sent again takes the look again');
   // A server that still gives the look itself (a game that hasn't moved): as it was.
-  screen.apply({ kind: 'item', name: 'sword', def: { kind: 'melee', name: 'Sword', icon: 'iron_sword', damage: 5, cooldown: 0.5, sounds: { use: 'swing' } } });
+  screen.apply({ kind: 'item', name: 'sword', def: { kind: 'melee', name: 'Sword', icon: 'iron_sword', damage: 5, cooldown: 0.5, sounds: { use: 'swing' } } as ItemDefinition });
   check(screen.items.get('sword')!.icon === 'iron_sword' && screen.items.get('sword')!.sounds?.use === 'swing', "a server's own look is kept");
 
   // `{ item }` icons: the item's as this screen has it; a model's picture from the side on asking.
@@ -136,7 +137,7 @@ function serverNames() {
   // The item's own sound as the screen has it, at the pitch given for it; else the name given; none, nothing.
   const screen = new Content();
   screen.apply({ kind: 'item', name: 'rifle', def: RIFLE });
-  screen.apply({ kind: 'item', name: 'katana', def: { kind: 'melee', name: 'Katana', damage: 100, cooldown: 1 } });
+  screen.apply({ kind: 'item', name: 'katana', def: { kind: 'melee', name: 'Katana', damage: 100, cooldown: 1 } as ItemDefinition });
   screen.lookItem('rifle', { sounds: { use: 'bang', reload: 'mag' } });
   screen.lookItem('katana', { sounds: { hit: 'slice' } });
   const item = (id: string) => screen.items.get(id);
@@ -241,7 +242,8 @@ function callOfBlocky() {
   for (const id of Object.keys(LOOKS)) {
     const d = item(id)!;
     check(d && typeof d.icon === 'object' && 'gltf' in d.icon && d.icon.gltf.includes('.glb'), `${id}'s icon is a picture of its model: ${JSON.stringify(d?.icon)}`);
-    if (id !== 'briefcase') check(d.hold?.model?.gltf?.url === (d.icon as { gltf: string }).gltf, `${id} is held as its model`);
+    // (The briefcase and the ammo can are only picked up.)
+    if (id !== 'briefcase' && id !== 'ammo') check(d.hold?.model?.gltf?.url === (d.icon as { gltf: string }).gltf, `${id} is held as its model`);
     for (const s of Object.values(d.sounds ?? {})) check(voices.has(s!) || ENGINE_SOUNDS.includes(s!), `${id}'s ${s} is a voice on the screen`);
   }
   const gun = (id: string) => item(id) as GunItem;
@@ -260,7 +262,7 @@ function callOfBlocky() {
   const menu = calls().find((c) => c.method === 'menu' && c.to === ann.player)!;
   const sections = (menu?.args[1] as { sections: { title: string; entries: { label: string; icon: IconRef }[] }[] }).sections;
   const entries = sections.filter((s) => s.title !== 'Outfit').flatMap((s) => s.entries);
-  check(entries.length === 6 && entries.every((e) => typeof e.icon === 'object' && 'item' in e.icon), `the loadout menu names its weapons: ${JSON.stringify(entries.map((e) => e.icon))}`);
+  check(entries.length === PRIMARIES.length + SIDEARMS.length + Object.keys(LETHALS).length && entries.every((e) => typeof e.icon === 'object' && 'item' in e.icon), `the loadout menu names its weapons: ${JSON.stringify(entries.map((e) => e.icon))}`);
   // Its outfits (progression.ts) by name too, each drawn as its fighter.
   const outfits = sections.find((s) => s.title === 'Outfit')?.entries ?? [];
   check(outfits.length === 10 && outfits.every((e) => typeof e.icon === 'object' && 'item' in e.icon && ((resolveIcon(e.icon, item) as { gltf?: string }).gltf ?? '').includes('.glb')), `the outfits, named and drawn: ${JSON.stringify(outfits.map((e) => e.icon))}`);

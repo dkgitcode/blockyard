@@ -1,5 +1,5 @@
-import type { Entity, GameContext, GunItem, GunOptions, ItemHost, ItemKind, ItemKit, ItemUse, Player, Vec3 } from '@platform';
-import { addBloom, canReload, type GunRules, type GunShown, type ShotWire, damageAt, freshGun, gun, gunMove, lookDir, pelletDirs, RAISE, resolveGunRules, settleBloom, spreadDeg, startReload, stepAim, stepReload, type Gun, type GunState } from '@platform/items';
+import type { Entity, GameContext, ItemHost, ItemKind, ItemKit, ItemUse, Player, Vec3 } from '@platform';
+import { addBloom, canReload, isGun, type GunRules, type GunShown, type ShotWire, damageAt, freshGun, gun, gunMove, lookDir, pelletDirs, RAISE, resolveGunRules, settleBloom, spreadDeg, startReload, stepAim, stepReload, type Gun, type GunState, type GunItem, type GunOptions } from '@platform/items';
 
 /** The gun kit on the host, with what a game asks of a player's guns. */
 export interface Guns extends ItemKind<GunItem, GunState> {
@@ -39,7 +39,7 @@ function guns1(rules: GunRules, host: ItemHost): Guns {
     const stack = p.inventory.held;
     if (!stack) return null;
     const def = defOf(stack.item);
-    if (def?.kind !== 'gun') return null;
+    if (!isGun(def)) return null;
     const state = p.inventory.state<GunState>(stack.item);
     return state && { item: stack.item, def, state };
   };
@@ -118,7 +118,7 @@ function guns1(rules: GunRules, host: ItemHost): Guns {
     setAmmo(p, item, a) {
       const st = p.inventory.state<GunState>(item);
       const def = defOf(item);
-      if (!st || def?.kind !== 'gun') return;
+      if (!st || !isGun(def)) return;
       if (a.magazine !== undefined) st.mag = Math.max(0, Math.min(def.magazine, Math.floor(a.magazine)));
       if (a.reserve !== undefined) st.reserve = Math.max(0, Math.floor(a.reserve));
     },
@@ -181,7 +181,7 @@ function fire(use: ItemUse<GunItem, GunState>, id: string, g: Gun, st: GunState,
   host.emit('shot', { player: me, weapon: id, from: eye, dir: lookDir(yaw, pitch) });
   // What everyone else sees and hears (the shooter's own screen showed it already): the gun's own
   // shot as each screen has it (its look's), else the server's.
-  host.send('$shot', wire, { except: me });
+  host.send('gun.shot', wire, { except: me });
   host.audio({ except: me }).play(g.def.sounds?.use ?? 'gunshot', { at: { x: eye.x, y: eye.y, z: eye.z }, item: { id, sound: 'use' } });
   let marker: boolean | 'kill' | null = null;
   for (const [target, d] of damage) {

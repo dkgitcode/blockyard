@@ -1,4 +1,5 @@
 import { defineMeta } from '@platform';
+import cover from './cover.webp?url';
 
 /** Arena: survive six waves of monsters in a colosseum, collect better weapons between waves, and defeat the Warden. */
 export default defineMeta({
@@ -6,6 +7,7 @@ export default defineMeta({
   title: 'Arena',
   tagline: 'Survive six waves and slay the Warden',
   accent: '#ff8a4c',
+  cover,
   instances: true,
   controls: [
     ['LMB', 'attack · hold to draw bow'],

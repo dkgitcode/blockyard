@@ -15,8 +15,10 @@ import imp_heavy from './imp_heavy.glb?url';
 import imp_specialist from './imp_specialist.glb?url';
 import luke from './luke.glb?url';
 import ben from './ben.glb?url';
+import chewie from './chewie.glb?url';
 import vader from './vader.glb?url';
 import emperor from './emperor.glb?url';
+import boba from './boba.glb?url';
 
 /**
  * The troopers' and heroes' models (GLB on the platform's humanoid rig, docs/HUMANOID.md), written by
@@ -82,9 +84,11 @@ export const TROOPER_VARIANTS: [TrooperModel[][], TrooperModel[][]] = [
 ];
 
 /** The heroes' models, by hero id. */
-export const HERO_MODELS: Record<'luke' | 'ben' | 'vader' | 'emperor', string> = {
+export const HERO_MODELS: Record<'luke' | 'ben' | 'chewie' | 'vader' | 'emperor' | 'boba', string> = {
   luke,
   ben,
+  chewie,
   vader,
   emperor,
+  boba,
 };

@@ -102,7 +102,24 @@ export const POWERS = {
   lightning: { range: 11, arc: 32, dps: 62, speed: 0.5, zap: 0.12 },
   chain: { range: 18, jump: 8, jumps: 4, damage: 55, falloff: 0.78 },
   aura: { radius: 5.5, every: 0.25, drain: 8 },
+  // Chewblocca's.
+  /** Five quarrels in a fan (degrees across it), each hitting and bursting as the bowcaster's do. */
+  scatter: { quarrels: 5, fan: 26, damage: 36 },
+  /** A bull rush (a movement ability): its seconds and speed; who it meets is thrown and flattened. */
+  charge: { time: 0.75, speed: 13.5, exit: 6, radius: 1.5, damage: 45, out: 11, up: 5, down: 1.3, heroDown: 0.45 },
+  /** Enraged: a roar that staggers everyone near; for a while he takes less and mends fast. */
+  roar: { radius: 6.5, damage: 12, out: 7, stagger: 0.8, taken: 0.5, mend: 28 },
+  // Boba Fetch's.
+  /** A rocket from his wrist: its speed, how hard it turns toward the one aimed at, how long it flies, its blast. */
+  rocket: { speed: 30, turn: 2.4, life: 2.4, radius: 1.3, damage: [115, 25] as [number, number], reach: 3.8, knockback: 1.3, range: 45 },
+  /** Fire from his wrist, held: a cone, a second's harm to all in it; the ground it reaches burns a while. */
+  flame: { range: 7.5, arc: 24, dps: 58, speed: 0.6, patch: 0.35, burns: 2.6, burn: 22, burnRadius: 1.2 },
+  /** The jetpack (a movement ability): lift off, then hover and strafe on its fuel; Space climbs, crouch drops. */
+  jetpack: { lift: 12, climb: 6.5, drop: -6, hover: 0, control: 3.2, speed: 1.35, gravity: 0.1 },
 };
+
+/** The bowcaster's quarrels burst where they hit: a small blast, a push. */
+export const QUARREL = { radius: 2.3, damage: [30, 8] as [number, number], knockback: 0.9 };
 
 /** A hero's health doesn't come back as a trooper's does: only slowly, a while after being hurt. */
 export const REGEN = {

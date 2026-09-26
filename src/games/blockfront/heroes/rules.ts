@@ -6,8 +6,9 @@ import { STYLE } from '../style';
 import type { Team } from '../teams';
 import { HERO_ABILITY, type HeroMove } from './abilities';
 import { heroBots } from './bots';
-import { HEROES, HERO_IDS, heroNumber, saberOf, type HeroId } from './defs';
+import { HEROES, SABER_HEROES, heroNumber, saberOf, usesSaber, type HeroId } from './defs';
 import { FX_ITEMS } from './fxitems';
+import { HERO_GUNS } from './guns';
 import { FORCE, setupPowers, type Powers } from './powers';
 import { bladePoint, sabers, type SaberItem, type Sabers } from './saber';
 import { GUARD, MOVE, POWERS, REGEN, TOUGH } from './tuning';
@@ -100,7 +101,11 @@ export function setupHeroes(game: GameContext, rules: HeroRules): Heroes {
   });
 
   const bots = heroBots(game, { heroOf, hostile: rules.hostile, powers, sabers: kind, retreat: (p) => rules.retreat?.(p) ?? null });
-  const botWeapons: Record<string, BotWeapon> = Object.fromEntries(HERO_IDS.map((id) => [saberOf(id), { range: 1.8, rush: true }]));
+  const botWeapons: Record<string, BotWeapon> = {
+    ...Object.fromEntries(SABER_HEROES.map((id) => [saberOf(id), { range: 1.8, rush: true }])),
+    hero_bowcaster: { range: 13 },
+    hero_ee3: { range: 20 },
+  };
 
   const configure = () =>
     kind()?.configure({
@@ -124,7 +129,11 @@ export function setupHeroes(game: GameContext, rules: HeroRules): Heroes {
     if (t.kind !== 'player' || !who.has(t.id) || !t.alive || hit.cancelled) return;
     const src = hit.source;
     const by = src && src !== 'world' && src.kind === 'player' ? src : null;
+    // A hero's own quarrel bursting, or own rocket, doesn't hurt them.
+    if (by === t && (hit.weapon === 'hero_bowcaster' || hit.weapon === FORCE.rocket)) return hit.cancel();
     if (by && !rules.hostile(by, t)) return;
+    // Enraged (Chewblocca's roar): he takes less of everything.
+    if (powers.enraged(t)) hit.amount *= POWERS.roar.taken;
     if (hit.cause === 'melee' || hit.cause === 'gun') hurtAt.set(t.id, game.clock.now);
     const k = kind();
     const all = powers.soresu(t);
@@ -180,6 +189,10 @@ export function setupHeroes(game: GameContext, rules: HeroRules): Heroes {
   game.events.on('playerDamage', ({ player }) => {
     if (who.has(player.id)) hurtAt.set(player.id, game.clock.now);
   });
+  // The bowcaster's quarrels burst where they hit (the gun kit's shot does the hit itself).
+  game.events.on('shot', ({ player, weapon, from, dir }) => {
+    if (weapon === 'hero_bowcaster') powers.quarrel(player, from, dir, 0);
+  });
   // Someone new on the scene: which heroes have their guard up (the powers tell them the rest).
   game.events.on('playerReady', ({ player: to }) => {
     const k = kind();
@@ -192,7 +205,8 @@ export function setupHeroes(game: GameContext, rules: HeroRules): Heroes {
   return {
     powers,
     define() {
-      for (const id of HERO_IDS) game.items.define(saberOf(id), { kind: 'saber', name: `${HEROES[id].name}'s Saber`, stack: 1 } satisfies SaberItem as unknown as ItemDefinition);
+      for (const id of SABER_HEROES) game.items.define(saberOf(id), { kind: 'saber', name: `${HEROES[id].name}'s Saber`, stack: 1 } satisfies SaberItem as unknown as ItemDefinition);
+      for (const [id, gun] of Object.entries(HERO_GUNS)) game.items.define(id, gun as unknown as ItemDefinition);
       for (const [id, def] of Object.entries(FX_ITEMS)) game.items.define(id, def);
       configure();
     },
@@ -205,23 +219,25 @@ export function setupHeroes(game: GameContext, rules: HeroRules): Heroes {
       p.health = h.health;
       p.speed = MOVE.speed;
       p.inventory.clear();
-      p.inventory.give(saberOf(id));
+      p.inventory.give(h.weapon);
       p.inventory.select(0);
       allowed.set(p.id, h.health);
       hurtAt.set(p.id, -99);
-      kind()?.fresh(p);
-      Object.assign(p.abilities[HERO_ABILITY] as HeroMove, { h: heroNumber(id), c0: 0, c1: 0, c2: 0, a0: 0, a1: 0, a2: 0, g: 1, k: 1, m: GUARD.meter, j: 0, r: 0, l: 0 });
-      game.audio.play('bfh_saber_ignite', { at: p.eye });
+      const saber = usesSaber(id);
+      if (saber) kind()?.fresh(p);
+      Object.assign(p.abilities[HERO_ABILITY] as HeroMove, { h: heroNumber(id), c0: 0, c1: 0, c2: 0, a0: 0, a1: 0, a2: 0, g: saber ? 1 : 0, k: 1, m: GUARD.meter, j: 0, r: 0, l: 0, f: 0, ft: 0 });
+      game.audio.play(saber ? 'bfh_saber_ignite' : 'bfh_hero_ready', { at: p.eye });
     },
     end(p) {
       if (!who.has(p.id)) return;
       powers.end(p);
       bots.forget(p);
-      if (p.bot) (p as Bot).controls.hold('KeyQ', false);
+      const held = HEROES[who.get(p.id)!]?.powers.find((w) => w.hold);
+      if (p.bot && held) (p as Bot).controls.hold(held.key, false);
       who.delete(p.id);
       allowed.delete(p.id);
       p.speed = 1;
-      Object.assign(p.abilities[HERO_ABILITY] as HeroMove, { h: 0, g: 0, k: 0, r: 0, l: 0, a0: 0, a1: 0, a2: 0 });
+      Object.assign(p.abilities[HERO_ABILITY] as HeroMove, { h: 0, g: 0, k: 0, r: 0, l: 0, f: 0, a0: 0, a1: 0, a2: 0 });
     },
     heroOf,
     update(dt) {

@@ -62,7 +62,7 @@ export default function blockfrontHeroes() {
     g.commands.run(`/hero ${id}`);
     theirs = HEROES[id].team === 0 ? 1 : 0;
     for (const t of troopers) match.fighters.get(t.id)!.team = theirs;
-    check(me.inventory.held?.item === `saber_${id}`, `expected ${id}'s saber in hand, got ${me.inventory.held?.item}`);
+    check(me.inventory.held?.item === HEROES[id].weapon, `expected ${id}'s weapon in hand, got ${me.inventory.held?.item}`);
     const m = me.abilities[HERO_ABILITY] as HeroMove;
     m.c0 = m.c1 = m.c2 = 0;
   };
@@ -254,6 +254,122 @@ export default function blockfrontHeroes() {
   check(burnt.every((v) => v < 60), `lightning should burn all three (${burnt.join(', ')})`);
   check((me.abilities[HERO_ABILITY] as HeroMove).c0 > 0, 'lightning should cool down once let go');
 
+  // ---- Chewblocca: the bowcaster's quarrels burst (a trooper beside the one hit is hurt too).
+  hero('chewie');
+  const holding = (): string | undefined => me.inventory.held?.item;
+  check(holding() === 'hero_bowcaster' && me.maxHealth === 850, `Chewblocca carries the bowcaster, 850 health (${holding()}, ${me.maxHealth})`);
+  idle(0.2);
+  place(me, 0, 0, 0);
+  place(shooter, 0, -8);
+  place(t2, 1.3, -8.3);
+  place(t3, 6, 6);
+  ready([me, shooter, t2, t3]);
+  idle(0.3);
+  tap({ clicked: 1, yaw: yawTo(me.eye, shooter.position), pitch: -0.12 });
+  idle(0.8);
+  const quarrelled = [100 - shooter.health, 100 - t2.health];
+  console.log(`  bowcaster: the one hit lost ${quarrelled[0].toFixed(0)}, the one beside it ${quarrelled[1].toFixed(0)} (the burst)`);
+  check(quarrelled[0] > 60, `a quarrel should hit hard (${quarrelled[0]})`);
+  check(quarrelled[1] > 5, `a quarrel's burst should hurt someone beside (${quarrelled[1]})`);
+
+  // Scatter Shot: three troopers across the front, all hit.
+  ready([shooter, t2, t3]);
+  place(shooter, -2.5, -9);
+  place(t2, 0, -10);
+  place(t3, 2.5, -9);
+  idle(0.3);
+  tap({ pressed: ['KeyQ'], yaw: 0, pitch: -0.1 });
+  idle(0.3);
+  const scattered = [shooter, t2, t3].map((t) => (t.alive ? t.health : 0));
+  console.log(`  scatter shot: troopers at ${scattered.map((v) => v.toFixed(0)).join(', ')}`);
+  check(scattered.every((v) => v < 100), `a scatter shot should hit all three (${scattered.join(', ')})`);
+
+  // Wookiee Charge: a trooper in the way is bowled over (hurt, thrown, held down a moment).
+  ready([shooter, t2, t3]);
+  place(me, 0, 6, 0);
+  place(shooter, 0.3, 1.5);
+  place(t2, 8, 8);
+  place(t3, -8, 8);
+  idle(0.3);
+  shooter.freeze(false);
+  const was2 = { ...shooter.position };
+  tap({ pressed: ['KeyE'], yaw: 0, pitch: 0 });
+  idle(0.85);
+  const flung = Math.hypot(shooter.position.x - was2.x, shooter.position.z - was2.z);
+  const downed = shooter.frozen;
+  console.log(`  charge: Chewblocca ran ${(6 - (me.position.z - AT.z)).toFixed(1)} blocks, the trooper thrown ${flung.toFixed(1)} and ${downed ? 'held down' : 'up again'}, at ${shooter.health.toFixed(0)}`);
+  check(shooter.health < 100 && flung > 1.5, `the charge should hurt and throw the trooper (health ${shooter.health}, thrown ${flung.toFixed(2)})`);
+  check(downed, 'a charged trooper should be held down a moment');
+  idle(1.2);
+
+  // Enraged: the roar staggers those near; he takes half.
+  ready([me, shooter, t2, t3]);
+  place(me, 0, 0, 0);
+  place(shooter, 1.5, -2.5);
+  place(t2, -1.5, -3);
+  place(t3, 9, 9);
+  idle(0.3);
+  shooter.freeze(false);
+  t2.freeze(false);
+  tap({ pressed: ['KeyF'] });
+  idle(0.4);
+  const staggered = [shooter.frozen, t2.frozen];
+  before = me.health;
+  me.damage(100, { source: 'world', knockback: 0 });
+  const tookEnraged = before - me.health;
+  console.log(`  roar: ${staggered.filter(Boolean).length} of 2 near staggered; enraged, 100 did ${tookEnraged.toFixed(0)}`);
+  check(staggered.every(Boolean), 'the roar should stagger both troopers near');
+  check(tookEnraged < 60, `enraged, Chewblocca should take about half (${tookEnraged})`);
+  idle(1.2);
+
+  // ---- Boba Fetch: the EE-3, a wrist rocket that seeks, the flamethrower, the jetpack.
+  hero('boba');
+  check(holding() === 'hero_ee3', `Boba Fetch carries the EE-3 (${holding()})`);
+  idle(0.2);
+  place(me, 0, 0, 0);
+  place(shooter, 3, -14);
+  place(t2, 9, 9);
+  place(t3, -9, 9);
+  ready([me, shooter, t2, t3]);
+  idle(0.3);
+  // Aimed a little off: it seeks him out.
+  tap({ pressed: ['KeyQ'], yaw: yawTo(me.eye, shooter.position) + 0.12, pitch: -0.05 });
+  let flew = 0;
+  h.run(2, { pilot: () => ({ yaw: me.yaw, pitch: me.pitch }), until: () => (flew += g.players.length ? 1 : 0) > 0 && !shooter.alive });
+  console.log(`  wrist rocket: the trooper 14 blocks off ${shooter.alive ? `at ${shooter.health.toFixed(0)}` : 'dead'}`);
+  check(!shooter.alive || shooter.health < 40, `the rocket should find the trooper (${shooter.health})`);
+  idle(0.3);
+
+  shooter.revive();
+  idle(0.2);
+  place(me, 0, 0, 0);
+  place(shooter, -0.8, -4);
+  place(t2, 0.9, -4.5);
+  place(t3, 9, 9);
+  ready([me, shooter, t2, t3]);
+  (me.abilities[HERO_ABILITY] as HeroMove).c1 = 0;
+  idle(0.3);
+  h.run(1.2, { pilot: () => ({ yaw: 0, pitch: -0.2, down: ['KeyE'] }) });
+  const burnt2 = [shooter, t2].map((t) => (t.alive ? t.health : 0));
+  const burning = h.calls.filter((c) => c.target === 'message' && c.method === 'bfh.burn').length;
+  console.log(`  flamethrower: 1.2 s, troopers at ${burnt2.map((v) => v.toFixed(0)).join(', ')}; ${burning} patches of ground set burning`);
+  check(burnt2.every((v) => v < 50), `the flamethrower should burn both (${burnt2.join(', ')})`);
+  check(burning > 0, 'the flamethrower should set the ground burning');
+  idle(0.5);
+
+  place(me, 0, 0, 0);
+  idle(0.5);
+  const liftFrom = me.position.y;
+  tap({ pressed: ['KeyF'] });
+  h.run(0.8, { pilot: () => ({ yaw: me.yaw, pitch: me.pitch, down: ['Space'] }) });
+  const up = me.position.y - liftFrom;
+  idle(1.2);
+  const hovering = me.position.y - liftFrom;
+  console.log(`  jetpack: up ${up.toFixed(1)} blocks climbing, ${hovering.toFixed(1)} after hovering a while`);
+  check(up > 3, `the jetpack should lift Boba (${up.toFixed(2)})`);
+  check(hovering > 2.5, `the jetpack should hold him up (${hovering.toFixed(2)})`);
+  idle(4);
+
   // ---- A hero's health doesn't come back as a trooper's does.
   me.damage(120, { source: 'world', knockback: 0 });
   const hurt = me.health;
@@ -269,7 +385,7 @@ export default function blockfrontHeroes() {
   // The player steps aside (back to a trooper, next life), and two bots a side take the heroes.
   me.protect(0);
   me.damage(10000, { source: 'world' });
-  const want: HeroId[] = ['luke', 'ben', 'vader', 'emperor'];
+  const want: HeroId[] = ['luke', 'chewie', 'vader', 'boba'];
   for (const id of want) {
     const b = g.bots.all.find((q) => match.fighters.get(q.id)?.team === HEROES[id].team && !match.fighters.get(q.id)?.wantHero);
     if (!b) continue;

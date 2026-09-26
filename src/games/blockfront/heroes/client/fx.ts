@@ -237,6 +237,10 @@ export function heroFx(scene: HeroScene): ClientKit {
   const zapped = new Map<string, number>();
   const chains: { p: string; path: string[]; until: number; next: number }[] = [];
   const hum = new Map<string, number>();
+  /** When each jetpack last roared (its sound comes in short bursts). */
+  const jetSound = new Map<string, number>();
+  /** Rockets as drawn here: where, which way (eased toward the server's word). */
+  const rocketsDrawn = new Map<number, { at: V3; dir: V3 }>();
   /** Rings spreading over the ground from a hero (a stance, a rage, an aura taking hold). */
   const spreads: { at: Vec3; born: number; r: number; beam: FxBeam }[] = [];
   /** Force waves rolling out (a push) or in (a pull): a ring of air, travelling. */
@@ -261,6 +265,14 @@ export function heroFx(scene: HeroScene): ClientKit {
         chests.set(f.player, { x: p.x, y: p.y + 1.25, z: p.z });
       }
       if (client.me.id && !chests.has(client.me.id)) chests.set(client.me.id, add(client.me.position, { x: 0, y: 1.25, z: 0 }));
+      const figs = new Map(client.figures.all.filter((f) => f.player).map((f) => [f.player!, f]));
+      /** Where a player's figure faces (level, unit), and how far it looks up or down. */
+      const facing = (id: string): { fwd: V3; pitch: number } | null => {
+        const f = figs.get(id);
+        if (f) return { fwd: new V3(0, 0, 1).applyQuaternion(f.root.getWorldQuaternion(new Quat())).setY(0).normalize(), pitch: -f.state.headPitch };
+        if (id === client.me.id) return { fwd: new V3(-Math.sin(client.me.look.yaw), 0, -Math.cos(client.me.look.yaw)), pitch: client.me.look.pitch };
+        return null;
+      };
       const cam = client.camera.position;
       const blade = (id: string) => {
         const b = scene.blades.get(id);
@@ -338,10 +350,88 @@ export function heroFx(scene: HeroScene): ClientKit {
           case 'power':
             power(client, n.m);
             break;
+          case 'burst':
+            quarrelBurst(client, n.at);
+            break;
           case 'swing':
           case 'zap':
             break;
         }
+      }
+
+      // ---- Chewblocca and Boba Fetch: what goes on while their powers do.
+      for (const [id, until] of scene.lasting) {
+        const who = chests.get(id);
+        const face = facing(id);
+        if (!who || !face) continue;
+        // Enraged: embers of fury rising off him.
+        if ((until.get('roar') ?? 0) > now && tick % 2 === 0) {
+          const a = Math.random() * Math.PI * 2;
+          fx.particles({ x: who.x + Math.cos(a) * 0.55, y: who.y - 1.1 + Math.random() * 0.6, z: who.z + Math.sin(a) * 0.55 }, lin('#ff9a2a'), { count: 1, speed: 0.4, size: 0.06, gravity: -3, glow: 2, life: 0.7, collide: false });
+        }
+        // The flamethrower: fire rolling out of his left wrist where he looks.
+        if ((until.get('flame') ?? 0) > now) {
+          const hand = scene.hands.get(id)?.l ?? who;
+          const dir = new V3(face.fwd.x * Math.cos(face.pitch), Math.sin(face.pitch), face.fwd.z * Math.cos(face.pitch)).normalize();
+          const from = add(hand, dir, 0.25);
+          for (let i = 0; i < 5; i++) {
+            const d = add(dir, { x: rnd(-0.18, 0.18), y: rnd(-0.1, 0.14), z: rnd(-0.18, 0.18) });
+            const at = add(from, d, rnd(0, POWERS.flame.range * 0.7));
+            const hot = Math.random();
+            fx.particles(at, hot < 0.3 ? [1, 0.85, 0.4] : hot < 0.75 ? [1, 0.42, 0.08] : [0.85, 0.16, 0.03], { count: 1, speed: 1.5, size: rnd(0.08, 0.2), gravity: -3, glow: 2.5, life: rnd(0.12, 0.3), drag: 2, collide: false });
+          }
+          if (tick % 3 === 0) fx.particles(add(from, dir, POWERS.flame.range * 0.8), [0.12, 0.1, 0.09], { count: 1, speed: 0.6, size: 0.22, gravity: -1.5, life: 0.9, spread: 0.4, collide: false });
+          fx.flare(from, 0.35);
+          if (now >= (jetSound.get(`f:${id}`) ?? 0)) {
+            jetSound.set(`f:${id}`, now + 0.28);
+            client.audio.play('bfh_flame', { at: from, volume: 0.9 });
+          }
+        }
+        // The jetpack: twin jets of fire from his back, driving down.
+        if ((until.get('jetpack') ?? 0) > now) {
+          const right = new V3(-face.fwd.z, 0, face.fwd.x);
+          const mine = id === client.me.id;
+          for (const side of [-1, 1]) {
+            const nozzle = { x: who.x - face.fwd.x * 0.28 + right.x * 0.13 * side, y: who.y - 0.05, z: who.z - face.fwd.z * 0.28 + right.z * 0.13 * side };
+            fx.particles(nozzle, [1, 0.8, 0.35], { count: 1, speed: 0.8, size: 0.1, gravity: 26, glow: 3, life: 0.14, collide: false });
+            fx.particles({ x: nozzle.x, y: nozzle.y - 0.2, z: nozzle.z }, [1, 0.4, 0.08], { count: 1, speed: 1.2, size: 0.13, gravity: 22, glow: 2.2, life: 0.2, collide: false });
+            // Smoke under him (thinner under your own: it'd cloud your view).
+            if (tick % (mine ? 6 : 3) === 0) fx.particles({ x: nozzle.x, y: nozzle.y - 0.6, z: nozzle.z }, [0.55, 0.52, 0.5], { count: 1, speed: 0.8, size: mine ? 0.12 : 0.2, gravity: 2, life: mine ? 0.5 : 0.8, spread: 0.1, collide: false });
+            fx.flare(nozzle, 0.3);
+          }
+          if (now >= (jetSound.get(id) ?? 0)) {
+            jetSound.set(id, now + 0.3);
+            client.audio.play('bfh_jet_loop', { at: who, volume: 0.8 });
+          }
+        }
+      }
+      // A charge: dust thrown up at his heels.
+      for (const [id, a] of scene.acts) {
+        if (a.k !== 'charge' || now - a.at > a.t) continue;
+        const c = chests.get(id);
+        if (c) fx.particles({ x: c.x, y: c.y - 1.2, z: c.z }, [0.62, 0.55, 0.42], { count: 2, speed: 2, size: 0.16, gravity: -0.4, life: 0.6, spread: 0.3, collide: false });
+      }
+      // Rockets: drawn where the server has them, eased along between its words; smoke behind.
+      for (const [n, r] of scene.rockets) {
+        let d = rocketsDrawn.get(n);
+        if (!d) rocketsDrawn.set(n, (d = { at: new V3(r.at.x, r.at.y, r.at.z), dir: new V3(r.dir.x, r.dir.y, r.dir.z) }));
+        // On along its way, and eased toward where the server last said (and that moved on since).
+        const since = now - r.heard;
+        const there = new V3(r.at.x + r.dir.x * POWERS.rocket.speed * since, r.at.y + r.dir.y * POWERS.rocket.speed * since, r.at.z + r.dir.z * POWERS.rocket.speed * since);
+        d.dir.lerp(new V3(r.dir.x, r.dir.y, r.dir.z), Math.min(1, dt * 12)).normalize();
+        d.at.addScaledVector(d.dir, POWERS.rocket.speed * dt).lerp(there, Math.min(1, dt * 8));
+        const tail = add(d.at, d.dir, -0.45);
+        B.line('white', tail, d.at, 0.07, 0.03, now);
+        B.line('red', add(d.at, d.dir, -0.9), d.at, 0.12, 0.05, now);
+        fx.particles(tail, [1, 0.6, 0.15], { count: 1, speed: 0.5, size: 0.1, gravity: 0, glow: 3, life: 0.12, collide: false });
+        fx.particles(tail, [0.6, 0.58, 0.55], { count: 1, speed: 0.3, size: 0.18, gravity: -0.6, life: 1.1, spread: 0.05, drag: 1, collide: false });
+      }
+      for (const n of [...rocketsDrawn.keys()]) if (!scene.rockets.has(n)) rocketsDrawn.delete(n);
+      // Burning ground.
+      scene.burns = scene.burns.filter((b) => b.until > now);
+      for (const b of scene.burns) {
+        if (Math.random() < 0.6) fx.particles({ x: b.at.x + rnd(-0.5, 0.5), y: b.at.y + 0.1, z: b.at.z + rnd(-0.5, 0.5) }, Math.random() < 0.5 ? [1, 0.55, 0.1] : [1, 0.3, 0.05], { count: 1, speed: 0.5, size: rnd(0.08, 0.16), gravity: -2.5, glow: 2.2, life: rnd(0.3, 0.6), collide: false });
+        if (tick % 6 === 0) fx.particles({ x: b.at.x, y: b.at.y + 0.5, z: b.at.z }, [0.14, 0.12, 0.11], { count: 1, speed: 0.4, size: 0.25, gravity: -1.2, life: 1.2, spread: 0.3, collide: false });
       }
 
       // ---- Lasting powers.
@@ -483,6 +573,17 @@ export function heroFx(scene: HeroScene): ClientKit {
       beams?.clear();
     },
   };
+
+  /** A bowcaster quarrel bursting: a green-white flash, sparks and a ring of it over what it hit. */
+  function quarrelBurst(client: Client, at: Vec3) {
+    const fx = client.fx;
+    fx.flare(at, 1.3);
+    fx.particles(at, [0.7, 1, 0.6], { count: 14, speed: 6, size: 0.05, gravity: 8, glow: 3.5, life: 0.3, spread: 0.08, collide: false });
+    fx.particles(at, lin('#5dff6a'), { count: 10, speed: 3.5, size: 0.08, gravity: 2, glow: 2.5, life: 0.35, spread: 0.15, collide: false });
+    fx.particles(at, [0.3, 0.28, 0.26], { count: 5, speed: 1.2, size: 0.18, gravity: -1, life: 0.7, spread: 0.2, collide: false });
+    spreads.push({ at, born: scene.now, r: 1.6, beam: 'green' });
+    client.audio.play('bfh_quarrel', { at, pitch: 0.9 + Math.random() * 0.2 });
+  }
 
   /** A bolt of lightning from `a` to `b`: a crackling core and its glow, and a fork now and then. */
   function bolt(client: Client, a: Vec3, b: Vec3, rough: number, life: number) {
@@ -626,6 +727,34 @@ export function heroFx(scene: HeroScene): ClientKit {
       case 'leap':
         if (at) fx.particles({ x: at.x, y: at.y + 0.1, z: at.z }, [0.62, 0.55, 0.42], { count: 14, speed: 3, size: 0.14, gravity: 1, life: 0.6, spread: 0.4, collide: false });
         break;
+      case 'scatter': {
+        // Five quarrels from his bowcaster, fanned (they burst where they land: the `burst` news).
+        const from = hands?.r ? add(hands.r, { x: 0, y: 0.12, z: 0 }) : at ? { x: at.x, y: at.y + 1.3, z: at.z } : null;
+        if (!from) break;
+        for (const e of m.path ?? []) {
+          const [x, y, z] = e.split(',').map(Number);
+          drawBolt(client, from, { x, y, z }, '#5dff6a', 'hero_bowcaster');
+        }
+        fx.flare(from, 1);
+        break;
+      }
+      case 'knock': {
+        const f = m.target ? client.figures.all.find((g) => g.player === m.target) : null;
+        const p = f?.root.getWorldPosition(new V3());
+        if (p) fx.particles({ x: p.x, y: p.y + 0.2, z: p.z }, [0.62, 0.55, 0.42], { count: 14, speed: 3, size: 0.16, gravity: 1, life: 0.7, spread: 0.4, up: 0.8, collide: false });
+        break;
+      }
+      case 'roar': {
+        if (!at || m.on === false) break;
+        // The roar rolling out: rings from his head, and one over the ground as wide as it reaches.
+        const face = fig ? new V3(0, 0, 1).applyQuaternion(fig.root.getWorldQuaternion(new Quat())).setY(0).normalize() : new V3(0, 0, -1);
+        const head = { x: at.x + face.x * 0.3, y: at.y + 1.75, z: at.z + face.z * 0.3 };
+        waves.push({ from: head, dir: { x: face.x, y: 0, z: face.z }, born: scene.now, len: POWERS.roar.radius, out: true });
+        waves.push({ from: head, dir: { x: face.x, y: 0, z: face.z }, born: scene.now + 0.12, len: POWERS.roar.radius * 0.8, out: true });
+        spreads.push({ at: { x: at.x, y: at.y + 0.08, z: at.z }, born: scene.now, r: POWERS.roar.radius, beam: 'white' });
+        if (dist(client.camera.position, at) < 9) fx.shake(0.1, 0.4);
+        break;
+      }
       case 'aura':
       case 'rage':
       case 'soresu':

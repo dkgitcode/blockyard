@@ -2,8 +2,8 @@ import type { GameContext, Player, Vec3 } from '@platform';
 import { match } from '../match';
 import { HERO_ABILITY, coolOf, type HeroMove } from './abilities';
 import { HEROES, type HeroId, type PowerId } from './defs';
-import { POWERS } from './tuning';
-import { MSG, p3, type Power, type Zap } from './wire';
+import { POWERS, QUARREL } from './tuning';
+import { MSG, p3, type Burn, type Power, type Rocket, type Zap } from './wire';
 
 /** What the powers need of the heroes' rules. */
 export interface PowerRules {
@@ -25,12 +25,25 @@ export const FORCE = {
   lightning: 'Force Lightning',
   chain: 'Chain Lightning',
   aura: 'Dark Aura',
+  charge: 'Wookiee Charge',
+  roar: 'Wookiee Roar',
+  rocket: 'Wrist Rocket',
+  flame: 'Flamethrower',
 } as const;
 
-/** Someone a power has hold of: dragged in and stunned (a pull), or lifted by the throat (a choke). */
+/** The bowcaster (its quarrels, a scatter shot's too, burst where they hit). */
+const BOWCASTER = 'hero_bowcaster';
+
+/** The powers that are movement abilities (`abilities.ts`): their keys aren't the server's to read. */
+const MOVES = new Set<PowerId>(['rush', 'leap', 'charge', 'jetpack']);
+
+/**
+ * Someone a power has hold of: dragged in and stunned (a pull), lifted by the throat (a choke),
+ * knocked flat (a charge: thrown first, frozen once down), or staggered (a roar).
+ */
 interface Held {
   by: Player;
-  kind: 'pull' | 'choke';
+  kind: 'pull' | 'choke' | 'down' | 'stun';
   /** Host time it took hold, and when it lets go. */
   from: number;
   until: number;
@@ -41,6 +54,27 @@ interface Held {
   move: number;
   /** A choke's harm not dealt yet (it's dealt in pulses). */
   owed: number;
+  /** Knocked flat: when they're frozen where they fell (host time; they fly first). */
+  freezeAt?: number;
+}
+
+/** A rocket in flight: where, which way, whom it seeks, how long it's flown, when every screen last heard. */
+interface Flying {
+  n: number;
+  by: Player;
+  at: Vec3;
+  dir: Vec3;
+  target: Player | null;
+  age: number;
+  told: number;
+}
+
+/** Ground on fire (the flamethrower's): burning until, and its next bite. */
+interface Patch {
+  at: Vec3;
+  by: Player;
+  until: number;
+  next: number;
 }
 
 /** A saber thrown: out along `dir` to `dist`, and back to the hand. */
@@ -67,7 +101,13 @@ interface Going {
   /** Whom they're choking (their id). */
   choking: string | null;
   thrown: Thrown | null;
-  rush: { cut: Set<string>; last: Vec3; until: number } | null;
+  /** A rush (Luke's) or a charge (Chewblocca's) under way: who it's met, where it was, until when. */
+  rush: { charge: boolean; cut: Set<string>; last: Vec3; until: number } | null;
+  /** The flamethrower: on until (host time), and its next patch of burning ground. */
+  flame: number;
+  flameNext: number;
+  /** Enraged (the roar) until. */
+  enraged: number;
 }
 
 export interface Powers {
@@ -93,6 +133,16 @@ export interface Powers {
   held(p: Player): boolean;
   /** A saber in flight: where it is now, if theirs is. */
   thrown(p: Player): Vec3 | null;
+  /** Enraged (Chewblocca's roar): he takes less, and mends fast. */
+  enraged(p: Player): boolean;
+  /**
+   * A bowcaster quarrel from `from` along `dir`: where it bursts (the first body or block), the
+   * burst's blast; with `direct`, its hit on whoever it met too (a scatter shot's: the gun kit's
+   * own shots hit by themselves). Returns where it burst.
+   */
+  quarrel(by: Player, from: Vec3, dir: Vec3, direct: number): Vec3;
+  /** Rockets in flight now (for tests). */
+  rockets(): readonly { at: Vec3; by: Player }[];
 }
 
 const DEG = Math.PI / 180;
@@ -113,16 +163,22 @@ function toSegment(p: Vec3, a: Vec3, b: Vec3): number {
  * The Force powers on the server: Q, E and F read from each hero's controls (people's and bots'
  * alike), each power's cooldown kept in their movement ability's state (`abilities.ts`: their
  * screen counts it down too, and the hero HUD shows it), what each does, and what every screen is
- * told of it (`wire.ts`). Saber Rush and Force Leap are movement abilities (predicted); their cuts
- * and the leap's landing are here (the `ability` event).
+ * told of it (`wire.ts`). Saber Rush, Force Leap, the Wookiee Charge and the jetpack are movement
+ * abilities (predicted); what they do to others (cuts, a landing, bowling people over) is here
+ * (the `ability` event).
  */
 export function setupPowers(game: GameContext, rules: PowerRules): Powers {
   const going = new Map<string, Going>();
   const held = new Map<string, Held>();
+  const inFlight: Flying[] = [];
+  const patches: Patch[] = [];
+  let rocketN = 0;
+  /** Quarrels burst this step, told to every screen together. */
+  let bursts: Burn['list'] = [];
 
   const of = (p: Player): Going => {
     let g = going.get(p.id);
-    if (!g) going.set(p.id, (g = { soresu: 0, rage: 0, aura: 0, auraNext: 0, lightning: 0, zapNext: 0, zapped: '', choking: null, thrown: null, rush: null }));
+    if (!g) going.set(p.id, (g = { soresu: 0, rage: 0, aura: 0, auraNext: 0, lightning: 0, zapNext: 0, zapped: '', choking: null, thrown: null, rush: null, flame: 0, flameNext: 0, enraged: 0 }));
     return g;
   };
   const move = (p: Player): HeroMove => p.abilities[HERO_ABILITY] as HeroMove;
@@ -168,7 +224,38 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
     }
     return best;
   };
-  const hurt = (t: Player, amount: number, by: Player, weapon: string, knockback = 0) => t.damage(amount, { source: by, knockback, weapon, cause: 'melee', from: by.position });
+  const hurt = (t: Player, amount: number, by: Player, weapon: string, knockback = 0, cause: 'melee' | 'fire' | 'gun' = 'melee') => t.damage(amount, { source: by, knockback, weapon, cause, from: by.position });
+
+  /**
+   * Along a ray from `from` (unit `dir`), within `range`: the first body (anyone but `by`, as a
+   * standing cylinder) or solid block it meets, and where.
+   */
+  const trace = (by: Player, from: Vec3, dir: Vec3, range: number): { at: Vec3; body: Player | null } => {
+    const hit = game.world.raycast(from, dir, range);
+    let far = hit ? Math.hypot(hit.point.x - from.x, hit.point.y - from.y, hit.point.z - from.z) : range;
+    let body: Player | null = null;
+    const flat = dir.x * dir.x + dir.z * dir.z;
+    for (const t of game.players) {
+      if (t === by || !t.alive) continue;
+      // Where the ray comes nearest the body's upright axis (level), and whether that's in it.
+      const s = flat > 1e-6 ? ((t.position.x - from.x) * dir.x + (t.position.z - from.z) * dir.z) / flat : Math.max(0, t.position.y - from.y) / Math.max(1e-6, Math.abs(dir.y));
+      if (s <= 0 || s >= far) continue;
+      const q = { x: from.x + dir.x * s, y: from.y + dir.y * s, z: from.z + dir.z * s };
+      if (Math.hypot(q.x - t.position.x, q.z - t.position.z) > 0.45 || q.y < t.position.y - 0.1 || q.y > t.position.y + 1.95) continue;
+      far = s;
+      body = t;
+    }
+    return { at: { x: from.x + dir.x * far, y: from.y + dir.y * far, z: from.z + dir.z * far }, body };
+  };
+
+  const quarrel = (by: Player, from: Vec3, dir: Vec3, direct: number): Vec3 => {
+    const { at, body } = trace(by, from, dir, 150);
+    if (body && direct > 0) body.damage(direct, { source: by, cause: 'gun', weapon: BOWCASTER, part: 'body', knockback: 0.5, from: by.position });
+    // Burst: a small blast (it breaks no blocks; its look is every screen's own).
+    game.world.explode(at, 0.4, { effect: false, filter: () => false, damage: QUARREL.damage, reach: QUARREL.radius, knockback: QUARREL.knockback, by, weapon: BOWCASTER });
+    bursts.push(p3(at));
+    return at;
+  };
 
   /** Let go of someone held. */
   const release = (id: string) => {
@@ -200,7 +287,65 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
   };
 
   // ---- Each power: whether it went off.
-  const powers: Record<Exclude<PowerId, 'rush' | 'leap'>, (p: Player, slot: number) => boolean> = {
+  const powers: Record<Exclude<PowerId, 'rush' | 'leap' | 'charge' | 'jetpack'>, (p: Player, slot: number) => boolean> = {
+    scatter(p) {
+      const S = POWERS.scatter;
+      const eye = p.eye;
+      const look = p.look;
+      const ends: [number, number, number][] = [];
+      for (let i = 0; i < S.quarrels; i++) {
+        // Fanned across the look, level.
+        const a = (i / (S.quarrels - 1) - 0.5) * S.fan * DEG;
+        const c = Math.cos(a);
+        const sn = Math.sin(a);
+        const dir = { x: look.x * c + look.z * sn, y: look.y, z: look.z * c - look.x * sn };
+        const l = Math.hypot(dir.x, dir.y, dir.z) || 1;
+        ends.push(p3(quarrel(p, eye, { x: dir.x / l, y: dir.y / l, z: dir.z / l }, S.damage)));
+      }
+      send({ p: p.id, k: 'scatter', path: ends.map((e) => e.join(',')) });
+      game.audio.play('bfh_bowcaster', { at: eye, pitch: 0.85 });
+      return true;
+    },
+    roar(p, slot) {
+      const R = POWERS.roar;
+      const g = of(p);
+      const t = HEROES.chewie.powers[2].lasts ?? 6;
+      g.enraged = now() + t;
+      setActive(p, slot, t);
+      const hits = enemies(p, R.radius);
+      for (const v of hits) {
+        hurt(v, R.damage * heroScale(v), p, FORCE.roar);
+        const dx = v.position.x - p.position.x;
+        const dz = v.position.z - p.position.z;
+        const d = Math.hypot(dx, dz) || 1;
+        v.impulse((dx / d) * R.out, 3, (dz / d) * R.out);
+        if (!held.has(v.id)) held.set(v.id, { by: p, kind: 'stun', from: now(), until: now() + R.stagger, a: { ...v.position }, b: { ...v.position }, move: 0, owed: 0, freezeAt: now() + 0.2 });
+      }
+      send({ p: p.id, k: 'roar', on: true, t, hits: hits.map((h) => h.id) });
+      game.audio.play('bfh_roar', { at: p.eye });
+      return true;
+    },
+    rocket(p) {
+      const R = POWERS.rocket;
+      const target = aimed(p, R.range);
+      const look = p.look;
+      // From his left wrist, a little ahead.
+      const from = { x: p.eye.x + look.x * 0.6 - look.z * -0.25, y: p.eye.y - 0.35, z: p.eye.z + look.z * 0.6 + look.x * -0.25 };
+      const n = ++rocketN;
+      inFlight.push({ n, by: p, at: from, dir: { ...look }, target, age: 0, told: now() });
+      send({ p: p.id, k: 'rocket', from: p3(from), dir: p3(look), target: target?.id, t: n });
+      game.audio.play('bfh_rocket', { at: from });
+      return true;
+    },
+    flame(p, slot) {
+      const g = of(p);
+      const t = HEROES.boba.powers[1].lasts ?? 3;
+      g.flame = now() + t;
+      g.flameNext = 0;
+      setActive(p, slot, t);
+      send({ p: p.id, k: 'flame', on: true, t });
+      return true;
+    },
     push(p) {
       const P = POWERS.push;
       const hits = enemies(p, P.range, P.arc);
@@ -349,13 +494,13 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
     const id = rules.heroOf(p);
     if (!id || !p.alive || held.has(p.id) || match.phase !== 'playing') return false;
     const info = HEROES[id].powers[slot];
-    if (!info || info.id === 'rush' || info.id === 'leap') return false;
+    if (!info || MOVES.has(info.id)) return false;
     const m = move(p);
     if (coolOf(m, slot) > 0) return false;
     const g = of(p);
-    // One thing at a time with the hands: no power while the saber's out, choking or throwing lightning.
-    if (g.thrown || g.choking || g.lightning > now()) return false;
-    if (!powers[info.id](p, slot)) return false;
+    // One thing at a time with the hands: no power while the saber's out, choking, or holding lightning or fire.
+    if (g.thrown || g.choking || g.lightning > now() || g.flame > now()) return false;
+    if (!powers[info.id as keyof typeof powers](p, slot)) return false;
     // A held power's cooldown starts when it's let go.
     if (!info.hold) setCool(p, slot, info.cooldown);
     return true;
@@ -368,11 +513,90 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
     setCool(p, 0, HEROES.emperor.powers[0].cooldown);
     send({ p: p.id, k: 'lightning', on: false });
   };
+  /** The flamethrower stops: its cooldown starts now. */
+  const stopFlame = (p: Player, g: Going) => {
+    g.flame = 0;
+    setActive(p, 1, 0);
+    setCool(p, 1, HEROES.boba.powers[1].cooldown);
+    send({ p: p.id, k: 'flame', on: false });
+  };
+
+  /** Fire from his wrist: everyone in the cone burning; now and then the ground where it reaches catches. */
+  const flaming = (p: Player, g: Going, dt: number) => {
+    const F = POWERS.flame;
+    for (const t of enemies(p, F.range, F.arc)) hurt(t, F.dps * dt * heroScale(t), p, FORCE.flame, 0, 'fire');
+    if (now() < g.flameNext) return;
+    g.flameNext = now() + F.patch;
+    // Where it reaches: the first block along the look, or the ground under the cone's end.
+    const eye = p.eye;
+    const look = p.look;
+    const hit = game.world.raycast(eye, look, F.range);
+    let at = hit ? hit.point : { x: eye.x + look.x * F.range, y: eye.y + look.y * F.range, z: eye.z + look.z * F.range };
+    const down = game.world.raycast({ x: at.x, y: at.y + 0.2, z: at.z }, { x: 0, y: -1, z: 0 }, 6);
+    if (!down) return;
+    at = { x: down.point.x, y: down.point.y + 0.05, z: down.point.z };
+    patches.push({ at, by: p, until: now() + F.burns, next: now() + 0.2 });
+    game.clients.send('all', MSG.burn, { list: [p3(at)], t: F.burns } satisfies Burn);
+  };
+
+  /** Rockets fly, turning toward whom they seek, and go off on the first body or block they meet. */
+  const rocketsFly = (dt: number) => {
+    const R = POWERS.rocket;
+    for (let i = inFlight.length - 1; i >= 0; i--) {
+      const r = inFlight[i];
+      r.age += dt;
+      // Seek: turn toward the target's chest, at most so fast.
+      if (r.target?.alive) {
+        const c = chest(r.target);
+        const to = { x: c.x - r.at.x, y: c.y - r.at.y, z: c.z - r.at.z };
+        const l = Math.hypot(to.x, to.y, to.z) || 1;
+        const k = Math.min(1, R.turn * dt);
+        const d = { x: r.dir.x + (to.x / l - r.dir.x) * k, y: r.dir.y + (to.y / l - r.dir.y) * k, z: r.dir.z + (to.z / l - r.dir.z) * k };
+        const dl = Math.hypot(d.x, d.y, d.z) || 1;
+        r.dir = { x: d.x / dl, y: d.y / dl, z: d.z / dl };
+      }
+      const step = R.speed * dt;
+      const { at, body } = trace(r.by, r.at, r.dir, step);
+      const blocked = !body && Math.hypot(at.x - r.at.x, at.y - r.at.y, at.z - r.at.z) < step - 1e-3;
+      // Anyone close by it (it goes off on a near miss too), not its firer.
+      const near = game.players.find((t) => t !== r.by && t.alive && toSegment({ x: t.position.x, y: t.position.y + 1, z: t.position.z }, r.at, at) < 0.7);
+      r.at = at;
+      if (body || blocked || near || r.age >= R.life) {
+        inFlight.splice(i, 1);
+        game.world.explode(at, R.radius, { damage: R.damage, reach: R.reach, knockback: R.knockback, by: r.by, weapon: FORCE.rocket });
+        send({ p: r.by.id, k: 'rocket', on: false, t: r.n, at: p3(at) });
+        continue;
+      }
+      if (now() - r.told >= 0.1) {
+        r.told = now();
+        game.clients.send('all', MSG.rocket, { n: r.n, at: p3(r.at), dir: p3(r.dir) } satisfies Rocket);
+      }
+    }
+  };
+
+  /** Burning ground: a bite every half second to anyone standing in it. */
+  const burning = () => {
+    const F = POWERS.flame;
+    for (let i = patches.length - 1; i >= 0; i--) {
+      const b = patches[i];
+      if (now() >= b.until) {
+        patches.splice(i, 1);
+        continue;
+      }
+      if (now() < b.next) continue;
+      b.next = now() + 0.5;
+      for (const t of game.players) {
+        if (!t.alive || !rules.hostile(b.by, t)) continue;
+        if (Math.hypot(t.position.x - b.at.x, t.position.z - b.at.z) > F.burnRadius || Math.abs(t.position.y - b.at.y) > 1.2) continue;
+        hurt(t, F.burn * 0.5 * heroScale(t), b.by, FORCE.flame, 0, 'fire');
+      }
+    }
+  };
 
   /** A rush under way: everyone in its path is cut (once), and thrown aside. */
   const rushing = (p: Player, g: Going) => {
     const r = g.rush!;
-    const R = POWERS.rush;
+    const R = r.charge ? POWERS.charge : POWERS.rush;
     const a = r.last;
     const b = { ...p.position };
     for (const t of game.players) {
@@ -380,9 +604,25 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
       const mid = { x: t.position.x, y: t.position.y + 0.9, z: t.position.z };
       if (toSegment(mid, { x: a.x, y: a.y + 0.9, z: a.z }, { x: b.x, y: b.y + 0.9, z: b.z }) > R.radius) continue;
       r.cut.add(t.id);
-      if (!hurt(t, R.damage * heroScale(t), p, FORCE.rush, 0.8)) continue;
-      game.clients.send('all', MSG.cut, { p: p.id, at: p3(chest(t)) });
-      game.audio.play('bfh_saber_hit', { at: chest(t) });
+      if (!r.charge) {
+        if (!hurt(t, R.damage * heroScale(t), p, FORCE.rush, 0.8)) continue;
+        game.clients.send('all', MSG.cut, { p: p.id, at: p3(chest(t)) });
+        game.audio.play('bfh_saber_hit', { at: chest(t) });
+        continue;
+      }
+      // A charge: bowled over, flung aside and up, and flat on their back a moment.
+      const C = POWERS.charge;
+      if (!hurt(t, C.damage * heroScale(t), p, FORCE.charge)) continue;
+      const fx = -Math.sin(p.yaw);
+      const fz = -Math.cos(p.yaw);
+      // Aside: off the side of his path they were on, and on ahead.
+      const side = (t.position.x - p.position.x) * -fz + (t.position.z - p.position.z) * fx >= 0 ? 1 : -1;
+      const k = rules.heroOf(t) ? 0.5 : 1;
+      t.impulse((fx * 0.7 - fz * side * 0.6) * C.out * k, C.up * k, (fz * 0.7 + fx * side * 0.6) * C.out * k);
+      const down = rules.heroOf(t) ? C.heroDown : C.down;
+      if (!held.has(t.id)) held.set(t.id, { by: p, kind: 'down', from: now(), until: now() + down, a: { ...t.position }, b: { ...t.position }, move: 0, owed: 0, freezeAt: now() + 0.35 });
+      send({ p: p.id, k: 'knock', target: t.id, t: down });
+      game.audio.play('bfh_knock', { at: chest(t) });
     }
     r.last = b;
     if (now() > r.until) g.rush = null;
@@ -448,6 +688,14 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
     const gone = !v || !v.alive || !by.alive || rules.heroOf(by) === null;
     const far = v && Math.hypot(v.position.x - by.position.x, v.position.z - by.position.z) > POWERS.choke.range + 6;
     if (gone || now() >= h.until || (h.kind === 'choke' && far)) return release(id);
+    // Knocked flat or staggered: frozen once they've come down (they fly first), where they are.
+    if (h.kind === 'down' || h.kind === 'stun') {
+      if (h.freezeAt !== undefined && now() >= h.freezeAt) {
+        v.freeze(true, { weapons: true });
+        h.freezeAt = undefined;
+      }
+      return;
+    }
     const t = (now() - h.from) / h.move;
     if (t <= 1.05) {
       // Along an arc: up and over, into place.
@@ -479,7 +727,14 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
         tell({ p: id, k: 'lightning', on: true, t: soon(g.lightning) });
         game.clients.send(to, MSG.zap, { p: id, hits: g.zapped ? g.zapped.split(',') : [] } satisfies Zap);
       }
+      if (g.flame > t) tell({ p: id, k: 'flame', on: true, t: soon(g.flame) });
+      if (g.enraged > t) tell({ p: id, k: 'roar', on: true, t: soon(g.enraged), hits: [] });
     }
+    for (const p of game.players) {
+      const f = (p.abilities[HERO_ABILITY] as HeroMove | undefined)?.f ?? 0;
+      if (f > 0 && rules.heroOf(p)) game.clients.send(to, MSG.power, { p: p.id, k: 'jetpack', on: true, t: Math.round(f * 100) / 100 } satisfies Power);
+    }
+    if (patches.length) game.clients.send(to, MSG.burn, { list: patches.map((b) => p3(b.at)), t: Math.max(...patches.map((b) => b.until - t)) } satisfies Burn);
     for (const [victim, h] of held) if (h.kind === 'choke') game.clients.send(to, MSG.power, { p: h.by.id, k: 'choke', on: true, target: victim, t: Math.round((h.until - t) * 100) / 100 } satisfies Power);
   });
 
@@ -488,10 +743,16 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
   game.events.on('ability', ({ player: p, ability, name }) => {
     if (ability !== HERO_ABILITY || !rules.heroOf(p)) return;
     const g = of(p);
-    if (name === 'rush') {
-      g.rush = { cut: new Set(), last: { ...p.position }, until: now() + POWERS.rush.time + 0.12 };
-      send({ p: p.id, k: 'rush' });
-      game.audio.play('bfh_saber_rush', { at: p.eye });
+    if (name === 'rush' || name === 'charge') {
+      const charge = name === 'charge';
+      g.rush = { charge, cut: new Set(), last: { ...p.position }, until: now() + (charge ? POWERS.charge.time : POWERS.rush.time) + 0.12 };
+      send({ p: p.id, k: charge ? 'charge' : 'rush' });
+      game.audio.play(charge ? 'bfh_charge' : 'bfh_saber_rush', { at: p.eye });
+    } else if (name === 'jet') {
+      send({ p: p.id, k: 'jetpack', on: true, t: HEROES.boba.powers[2].lasts ?? 4 });
+      game.audio.play('bfh_jet', { at: p.position });
+    } else if (name === 'jetEnd') {
+      send({ p: p.id, k: 'jetpack', on: false });
     } else if (name === 'leap') {
       send({ p: p.id, k: 'leap' });
       game.audio.play('bfh_force_leap', { at: p.eye });
@@ -519,7 +780,10 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
       if (g.soresu > now()) send({ p: p.id, k: 'soresu', on: false });
       if (g.rage > now()) send({ p: p.id, k: 'rage', on: false });
       if (g.aura > now()) send({ p: p.id, k: 'aura', on: false });
+      if (g.flame) send({ p: p.id, k: 'flame', on: false });
+      if (g.enraged > now()) send({ p: p.id, k: 'roar', on: false });
     }
+    if (((p.abilities[HERO_ABILITY] as HeroMove | undefined)?.f ?? 0) > 0) send({ p: p.id, k: 'jetpack', on: false });
     going.delete(p.id);
     for (const [id, h] of [...held]) if (h.by === p) release(id);
     release(p.id);
@@ -532,6 +796,8 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
       if (now() < lastNow) {
         going.clear();
         held.clear();
+        inFlight.length = 0;
+        patches.length = 0;
       }
       lastNow = now();
       for (const [id, h] of [...held]) holding(id, h, dt);
@@ -542,13 +808,23 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
         if (p.alive && !held.has(p.id) && match.phase === 'playing') {
           // The keys: pressed (a held one, down), for the powers that aren't movement abilities.
           HEROES[id].powers.forEach((info, slot) => {
-            if (info.hold ? p.input.isDown(info.key) && !(g && g.lightning > now()) : p.input.pressed(info.key)) use(p, slot);
+            if (info.hold ? p.input.isDown(info.key) && !(g && (g.lightning > now() || g.flame > now())) : p.input.pressed(info.key)) use(p, slot);
           });
         }
         if (!g) continue;
         if (g.lightning) {
           if (!p.alive || held.has(p.id) || now() >= g.lightning || !p.input.isDown(HEROES[id].powers[0].key)) stopLightning(p, g);
           else zapping(p, g, dt);
+        }
+        if (g.flame) {
+          if (!p.alive || held.has(p.id) || now() >= g.flame || !p.input.isDown(HEROES[id].powers[1].key)) stopFlame(p, g);
+          else flaming(p, g, dt);
+        }
+        if (g.enraged > now()) {
+          if (p.alive) rules.heal(p, POWERS.roar.mend * dt);
+        } else if (g.enraged) {
+          g.enraged = 0;
+          send({ p: p.id, k: 'roar', on: false });
         }
         if (g.rush) rushing(p, g);
         if (g.thrown) flying(p, g);
@@ -565,6 +841,12 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
           g.rage = 0;
           send({ p: p.id, k: 'rage', on: false });
         }
+      }
+      rocketsFly(dt);
+      burning();
+      if (bursts.length) {
+        game.clients.send('all', MSG.burst, { list: bursts, t: 0 } satisfies Burn);
+        bursts = [];
       }
     },
     use,
@@ -586,7 +868,7 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
       const g = going.get(p.id);
       if (!g) return 1;
       const t = now();
-      return (g.rage > t ? POWERS.rage.speed : 1) * (g.soresu > t ? POWERS.soresu.speed : 1) * (g.choking ? POWERS.choke.speed : 1) * (g.lightning > 0 ? POWERS.lightning.speed : 1);
+      return (g.rage > t ? POWERS.rage.speed : 1) * (g.soresu > t ? POWERS.soresu.speed : 1) * (g.choking ? POWERS.choke.speed : 1) * (g.lightning > 0 ? POWERS.lightning.speed : 1) * (g.flame > 0 ? POWERS.flame.speed : 1);
     },
     rage: (p) => (going.get(p.id)?.rage ?? 0) > now(),
     held: (p) => held.has(p.id),
@@ -594,5 +876,8 @@ export function setupPowers(game: GameContext, rules: PowerRules): Powers {
       const th = going.get(p.id)?.thrown;
       return th ? th.last : null;
     },
+    enraged: (p) => (going.get(p.id)?.enraged ?? 0) > now(),
+    quarrel,
+    rockets: () => inFlight,
   };
 }

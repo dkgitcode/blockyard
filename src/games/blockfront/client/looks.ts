@@ -57,7 +57,8 @@ export const LOOKS: Record<string, ItemLook> = {
     icon: { gltf: url('hero_bowcaster') },
     hold: { style: 'gun', model: HeldModels.gltf(url('hero_bowcaster')), gun: FP },
     tracer: '#5dff6a',
-    sounds: { use: 'blaster_sniper', reload: 'vent', empty: 'overheat' },
+    // (Its twang-boom: heroes/client/sounds.ts.)
+    sounds: { use: 'bfh_bowcaster', reload: 'vent', empty: 'overheat' },
   },
   hero_ee3: {
     icon: { gltf: url('hero_ee3') },

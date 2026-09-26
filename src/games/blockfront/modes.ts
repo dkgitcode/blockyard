@@ -33,9 +33,12 @@ export interface MatchPlan {
   map: string;
 }
 
-/** What a public room plays, match after match: mostly Conquest, now and then the heroes' brawl. */
+/** What a public room plays, match after match: mostly Conquest on each map in turn, now and then the heroes' brawl. */
 export const ROTATION: MatchPlan[] = [
   { mode: 'conquest', map: 'spaceport' },
-  { mode: 'conquest', map: 'spaceport' },
+  { mode: 'conquest', map: 'frostline' },
   { mode: 'hvv', map: 'spaceport' },
+  { mode: 'conquest', map: 'spaceport' },
+  { mode: 'conquest', map: 'frostline' },
+  { mode: 'hvv', map: 'frostline' },
 ];

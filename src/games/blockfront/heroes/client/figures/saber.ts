@@ -51,14 +51,14 @@ const K = (p: V3, tip: number, turn: number, two: number, twist = 0, lean = 0): 
  * pointed at them; the Sith's low at their side. All out to the right, where the camera over the
  * shoulder sees them.
  */
-const GUARD: Record<HeroId, SaberKey> = {
+const GUARD: Partial<Record<HeroId, SaberKey>> = {
   luke: K([-0.3, -0.33, 0.18], -1.28, -0.62, 1, -0.22),
   ben: K([-0.3, -0.24, 0.28], -0.58, -0.42, 0, -0.18),
   vader: K([-0.3, -0.44, 0.2], 0.55, -0.22, 0, -0.05, -0.02),
   emperor: K([-0.28, -0.46, 0.18], 0.85, -0.3, 0, -0.1, 0.14),
 };
 /** Where the free hand rests (from the shoulders' middle, in the chest's frame). */
-const LOOSE: Record<HeroId, V3> = {
+const LOOSE: Partial<Record<HeroId, V3>> = {
   luke: [0.26, -0.45, 0.1],
   ben: [0.3, -0.3, 0.24],
   vader: [0.24, -0.52, 0.06],
@@ -134,7 +134,7 @@ export function saberPose(scene: HeroScene, id: string, hero: HeroId, o: { run: 
   const staggered = st && now < st.until;
   const guard = scene.debug?.guard ?? scene.guards.get(id)?.on ?? false;
   const soresu = scene.on(id, 'soresu');
-  let want = mix(GUARD[hero], RUN, clamp01((o.run - 0.55) * 2.5));
+  let want = mix(GUARD[hero] ?? GUARD.luke!, RUN, clamp01((o.run - 0.55) * 2.5));
   if (soresu) want = SORESU;
   if (guard) want = BLOCK;
   if (staggered) want = STAGGER;
@@ -158,7 +158,7 @@ export function saberPose(scene: HeroScene, id: string, hero: HeroId, o: { run: 
   }
   const pose: SaberPose = { key, drop: 0, hide: false, left: null, right: null, shake: 0 };
   if (soresu && !guard) pose.left = { at: [0.22, -0.1, 0.45], w: 1, open: true };
-  if (key.two < 0.5 && !pose.left) pose.left = { at: LOOSE[hero], w: 0, open: false };
+  if (key.two < 0.5 && !pose.left) pose.left = { at: LOOSE[hero] ?? LOOSE.luke!, w: 0, open: false };
   // A power's gesture.
   const dbg = scene.debug?.act;
   const act = dbg ? { k: dbg[0], at: now - dbg[1], t: dbg[1] + 1 } : scene.act(id);
@@ -239,4 +239,4 @@ export function saberPose(scene: HeroScene, id: string, hero: HeroId, o: { run: 
 }
 
 /** A fresh stance to ease from. */
-export const stanceOf = (hero: HeroId): SaberKey => mix(GUARD[hero], GUARD[hero], 0);
+export const stanceOf = (hero: HeroId): SaberKey => mix(GUARD[hero] ?? GUARD.luke!, GUARD[hero] ?? GUARD.luke!, 0);

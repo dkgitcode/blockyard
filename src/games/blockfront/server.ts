@@ -3,7 +3,8 @@ import { guns, melee, navGrid, throwables, type NavGrid } from '@platform/kits';
 import { makeBots, type Bots } from './bots';
 import { CLASSES, CLASS_IDS, type ClassId } from './classes';
 import { Conquest, type PostNews } from './conquest';
-import { HEROES, HERO_IDS, saberOf, type HeroId } from './heroes/defs';
+import { HEROES, HERO_IDS, type HeroId } from './heroes/defs';
+import { HERO_GUNS, isHeroGun } from './heroes/guns';
 import { heroItems, setupHeroes, type Heroes } from './heroes/rules';
 import { BOARD_COLUMNS, CONQUEST, STATUS } from './hud';
 import { MAPS, mapById, type SpawnPoint } from './map';
@@ -323,7 +324,7 @@ function spawnMenu(game: GameContext, f: Fighter) {
       entries: HERO_IDS.filter((id) => HEROES[id].team === f.team).map((id) => {
         const why = heroRefusal(f, id);
         return {
-          icon: { item: saberOf(id), view: 'side' } as IconRef,
+          icon: { item: HEROES[id].weapon, view: 'side' } as IconRef,
           label: HEROES[id].name,
           note: `${HEROES[id].title} · ${HEROES[id].powers.map((w) => w.name).join(' · ')}`,
           detail: why ?? (heroMode() ? '' : `${HEROES[id].cost} BP`),
@@ -414,7 +415,7 @@ function balanceBots(game: GameContext) {
 // Deaths, points, the posts changing hands
 // -------------------------------------------------------------------------------------------------
 
-const killIcon = (weapon: string): IconRef | null => feedIcon(weapon) ?? (weapon.startsWith('saber_') ? { item: weapon, view: 'side' } : null);
+const killIcon = (weapon: string): IconRef | null => feedIcon(weapon) ?? (weapon.startsWith('saber_') || isHeroGun(weapon) ? { item: weapon, view: 'side' } : null);
 
 function earn(f: Fighter, points: number) {
   f.bp += points;
@@ -448,7 +449,7 @@ function onDeath(game: GameContext, victim: Player, source: unknown, weapon: str
       ...(headshot ? ['⌖'] : []),
       { text: victim.name, color: TEAMS[v.team].color },
     ]);
-    victim.hud.banner('KILLED BY', `${killer.name}${weapon ? ` · ${k.hero && weapon.startsWith('saber_') ? 'a saber' : weaponName(weapon)}` : ''}`, { color: COLORS.red, duration: RESPAWN - 0.5 });
+    victim.hud.banner('KILLED BY', `${killer.name}${weapon ? ` · ${k.hero && weapon.startsWith('saber_') ? 'a saber' : (HERO_GUNS[weapon]?.name ?? weaponName(weapon))}` : ''}`, { color: COLORS.red, duration: RESPAWN - 0.5 });
     // The death cam: a moment on the ground, then round whoever did it until they deploy again.
     if (!victim.bot) game.clock.after(0.9, () => !victim.alive && killer.alive && victim.camera.orbit(killer, { distance: 6, min: 6, max: 6, wheel: false }));
   } else {
@@ -523,7 +524,7 @@ function cool(game: GameContext, dt: number) {
     if (!p.alive || now - (lastShot.get(p.id) ?? -99) < COOL_AFTER) continue;
     const held = g.held(p);
     for (const stack of p.inventory.slots) {
-      const def = stack && BLASTERS[stack.item];
+      const def = stack && (BLASTERS[stack.item] ?? HERO_GUNS[stack.item]);
       if (!stack || !def) continue;
       if (held?.item === stack.item && g.reloading(p)) continue;
       const a = g.ammo(p, stack.item);

@@ -1,6 +1,6 @@
 import { HeldModels, type GunHold, type ItemLook, type ItemPoses } from '@platform';
 import type { Client } from '@platform/client';
-import { HERO_IDS, HEROES, saberOf } from '../heroes/defs';
+import { HEROES, SABER_HEROES, saberOf } from '../heroes/defs';
 import { WEAPON_MODELS } from '../models';
 import { TEAMS } from '../teams';
 
@@ -52,8 +52,22 @@ export const LOOKS: Record<string, ItemLook> = {
     trail: '#ff3b30',
     sounds: { draw: 'detonator_arm', use: 'toss', hit: 'clink' },
   },
+  // The heroes' guns (their gameplay is the heroes' server code): the Wookiee's bowcaster, the bounty hunter's carbine.
+  hero_bowcaster: {
+    icon: { gltf: url('hero_bowcaster') },
+    hold: { style: 'gun', model: HeldModels.gltf(url('hero_bowcaster')), gun: FP },
+    tracer: '#5dff6a',
+    // (Its twang-boom: heroes/client/sounds.ts.)
+    sounds: { use: 'bfh_bowcaster', reload: 'vent', empty: 'overheat' },
+  },
+  hero_ee3: {
+    icon: { gltf: url('hero_ee3') },
+    hold: { style: 'gun', model: HeldModels.gltf(url('hero_ee3')), gun: FP },
+    tracer: TEAMS[1].bolt,
+    sounds: { use: 'blaster_pistol', reload: 'vent', empty: 'overheat' },
+  },
   ...Object.fromEntries(
-    HERO_IDS.map((id) => [
+    SABER_HEROES.map((id) => [
       saberOf(id),
       {
         icon: { gltf: url(saberOf(id)) },

@@ -189,7 +189,10 @@ export function gameBlocks(def: Pick<GameDefinition, 'id' | 'blocks'>, palette?:
     const byKey = new Map(variants.map((v) => [keyOf(v), v]));
     ordered = palette.map((k) => byKey.get(k) ?? missing(k, layer(MISSING, { tint: null, glow: null, clear: false, grass: false }, 'missing')));
     const taken = new Set(palette);
-    ordered.push(...variants.filter((v) => !taken.has(keyOf(v))));
+    // This copy's own variants the server hasn't got can never be in its world: after the server's,
+    // while there's room (a page older than the server, its game since changed, still starts).
+    const extra = variants.filter((v) => !taken.has(keyOf(v)));
+    ordered.push(...extra.slice(0, Math.max(0, 255 - b.first - ordered.length)));
   }
   const room = 255 - b.first;
   if (ordered.length > room) throw new Error(`blocks: ${ordered.length} variants is too many (a game can have ${room}; a slab is 2, stairs are 8)`);

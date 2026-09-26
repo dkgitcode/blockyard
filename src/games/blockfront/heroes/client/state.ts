@@ -1,9 +1,12 @@
 import type { Vec3 } from '@platform';
 import type { Client, ClientKit } from '@platform/client';
-import { HEROES, heroOfSaber, type HeroId, type PowerId } from '../defs';
+import { HEROES, heroOfSaber, heroOfWeapon, type HeroId, type PowerId } from '../defs';
 import type { FxBeam } from '../fxitems';
-import { MSG, type Clash, type Cut, type Deflects, type Guard, type P3, type Power, type Swing, type Zap } from '../wire';
+import { MSG, type Burn, type Clash, type Cut, type Deflects, type Guard, type P3, type Power, type Rocket, type Swing, type Zap } from '../wire';
 import type { OwnSaber } from './predict';
+
+/** Powers that last a while, as a hero's figure and effects show them. */
+export type Lasting = 'soresu' | 'rage' | 'aura' | 'lightning' | 'choke' | 'roar' | 'flame' | 'jetpack';
 
 /** A power's gesture on a figure: which, since when (this screen's clock), for how long. */
 export interface Act {
@@ -12,9 +15,9 @@ export interface Act {
   t: number;
 }
 
-/** Someone a power has hold of, as their figure shows it. */
+/** Someone a power has hold of, as their figure shows it (`down`: bowled over, flat on their back). */
 export interface Victim {
-  kind: 'choke' | 'pull' | 'thrown';
+  kind: 'choke' | 'pull' | 'thrown' | 'down';
   by: string;
   at: number;
   until: number;
@@ -38,7 +41,8 @@ export type News =
   | { t: 'clash'; m: Clash }
   | { t: 'cut'; m: Cut }
   | { t: 'power'; m: Power }
-  | { t: 'zap'; m: Zap };
+  | { t: 'zap'; m: Zap }
+  | { t: 'burst'; at: Vec3 };
 
 /** Where a hero's blade was drawn this frame (the figures kit's word), for trails and sparks. */
 export interface Blade {
@@ -50,7 +54,7 @@ export interface Blade {
 }
 
 /** The beam each hero's blade glows in (`fxitems.ts`). */
-export const BEAM: Record<HeroId, FxBeam> = { luke: 'green', ben: 'blue', vader: 'red', emperor: 'crimson' };
+export const BEAM: Record<HeroId, FxBeam> = { luke: 'green', ben: 'blue', chewie: 'white', vader: 'red', emperor: 'crimson', boba: 'white' };
 
 /** The blade's colour, linear-ish for particles. */
 export const bladeColor = (id: HeroId) => HEROES[id].blade;
@@ -81,7 +85,11 @@ export class HeroScene {
   victims = new Map<string, Victim>();
   flights = new Map<string, Flight>();
   /** Powers that last, by hero, until when. */
-  lasting = new Map<string, Map<'soresu' | 'rage' | 'aura' | 'lightning' | 'choke', number>>();
+  lasting = new Map<string, Map<Lasting, number>>();
+  /** Rockets in flight (by number): where the server last had each, which way, and when we heard. */
+  rockets = new Map<number, { by: string; at: Vec3; dir: Vec3; heard: number; target: string | null }>();
+  /** Ground burning, until when. */
+  burns: { at: Vec3; until: number }[] = [];
   /** Lightning's targets now, by caster. */
   zaps = new Map<string, string[]>();
   blades = new Map<string, Blade>();
@@ -106,16 +114,20 @@ export class HeroScene {
   }
 
   /** A lasting power of theirs, on now. */
-  on(id: string, k: 'soresu' | 'rage' | 'aura' | 'lightning' | 'choke'): boolean {
+  on(id: string, k: Lasting): boolean {
     return (this.lasting.get(id)?.get(k) ?? 0) > this.now;
   }
 
-  /** The hero a player is by what they hold, if any (`client.figures`: `fig.held?.item`). */
+  /** The saber hero a player is by what they hold, if any (`client.figures`: `fig.held?.item`). */
   static heroOf(item: string | null | undefined): HeroId | null {
     return heroOfSaber(item);
   }
+  /** The hero a player is by what they hold, saber or blaster. */
+  static heroByWeapon(item: string | null | undefined): HeroId | null {
+    return heroOfWeapon(item);
+  }
 
-  private last(id: string, k: 'soresu' | 'rage' | 'aura' | 'lightning' | 'choke', until: number) {
+  private last(id: string, k: Lasting, until: number) {
     let m = this.lasting.get(id);
     if (!m) this.lasting.set(id, (m = new Map()));
     m.set(k, until);
@@ -175,6 +187,20 @@ export class HeroScene {
         this.news.push({ t: 'power', m });
         break;
       }
+      case MSG.rocket: {
+        const m = data as Rocket;
+        const r = this.rockets.get(m.n);
+        if (r) Object.assign(r, { at: v(m.at), dir: v(m.dir), heard: now });
+        break;
+      }
+      case MSG.burn: {
+        const m = data as Burn;
+        for (const at of m.list) this.burns.push({ at: v(at), until: now + m.t });
+        break;
+      }
+      case MSG.burst:
+        for (const at of (data as Burn).list) this.news.push({ t: 'burst', at: v(at) });
+        break;
     }
   }
 
@@ -232,6 +258,39 @@ export class HeroScene {
         this.acts.set(m.p, { k: 'land', at: now, t: 0.45 });
         for (const h of m.hits ?? []) this.victims.set(h, { kind: 'thrown', by: m.p, at: now, until: now + 0.8 });
         break;
+      case 'scatter':
+        this.acts.set(m.p, { k: 'scatter', at: now, t: 0.35 });
+        break;
+      case 'charge':
+        this.acts.set(m.p, { k: 'charge', at: now, t: 0.85 });
+        break;
+      case 'knock':
+        if (m.target) this.victims.set(m.target, { kind: 'down', by: m.p, at: now, until: now + (m.t ?? 1.2) });
+        break;
+      case 'roar':
+        this.last(m.p, 'roar', off ? 0 : now + (m.t ?? 6));
+        if (!off) {
+          this.acts.set(m.p, { k: 'roar', at: now, t: 0.95 });
+          for (const h of m.hits ?? []) this.victims.set(h, { kind: 'thrown', by: m.p, at: now, until: now + 0.8 });
+        }
+        break;
+      case 'rocket':
+        if (off) {
+          if (m.t !== undefined) this.rockets.delete(m.t);
+        } else if (m.t !== undefined && m.from && m.dir) {
+          this.rockets.set(m.t, { by: m.p, at: v(m.from), dir: v(m.dir), heard: now, target: m.target ?? null });
+          this.acts.set(m.p, { k: 'rocket', at: now, t: 0.4 });
+        }
+        break;
+      case 'flame':
+        this.last(m.p, 'flame', off ? 0 : now + (m.t ?? 3));
+        if (off) {
+          if (this.acts.get(m.p)?.k === 'flame') this.acts.delete(m.p);
+        } else this.acts.set(m.p, { k: 'flame', at: now, t: m.t ?? 3 });
+        break;
+      case 'jetpack':
+        this.last(m.p, 'jetpack', off ? 0 : now + (m.t ?? 4));
+        break;
     }
   }
 
@@ -279,7 +338,8 @@ export class HeroScene {
 
   /** A restart: everything goes. */
   clear() {
-    for (const m of [this.swings, this.guards, this.staggers, this.flicks, this.acts, this.victims, this.flights, this.lasting, this.zaps, this.blades, this.hands]) m.clear();
+    for (const m of [this.swings, this.guards, this.staggers, this.flicks, this.acts, this.victims, this.flights, this.lasting, this.zaps, this.blades, this.hands, this.rockets]) m.clear();
+    this.burns = [];
     this.news = [];
   }
 }

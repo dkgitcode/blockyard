@@ -5,6 +5,7 @@ import type { HeroId } from '../../defs';
 import { HeroScene, type Victim } from '../state';
 import { heldInfo, inFist, type HeldInfo } from './held';
 import { DEFAULT_POSES, resolvePoses, type Poses } from './poses';
+import { gunHeroPose, type GunHeroPose } from './gunhero';
 import { saberPose, stanceOf, type Gesture, type SaberKey, type SaberPose } from './saber';
 
 export interface HumanoidOptions {
@@ -134,6 +135,8 @@ class Poser {
   /** The hero whose saber it holds (a model), and their stance as it eases from one to the next. */
   private hero: HeroId | null = null;
   private stance: SaberKey | null = null;
+  /** The hero whose blaster it holds (Chewblocca's bowcaster, Boba Fetch's EE-3). */
+  private gunHero: HeroId | null = null;
 
   constructor(
     private fig: Figure,
@@ -166,6 +169,7 @@ class Poser {
     this.held = null;
     const info = h ? heldInfo(h) : null;
     this.hero = info ? HeroScene.heroOf(h?.item) : null;
+    this.gunHero = info?.kind === 'gun' ? HeroScene.heroByWeapon(h?.item) : null;
     this.stance = this.hero ? stanceOf(this.hero) : null;
     this.heldPoses = info?.poses ? resolvePoses(info.poses, this.poses) : this.poses;
     if (!h) return;
@@ -227,8 +231,10 @@ class Poser {
     // A hero with their saber: its pose (the stance, a swing, a power's gesture) this frame.
     const sab = this.hero && this.stance && pid && s.dying <= 0 ? saberPose(this.scene, pid, this.hero, { run: clamp01(((s.speed ?? 0) - G.run[0]) / (G.run[1] - G.run[0])) * clamp01(s.walkAmount * 1.5), air: !!s.air, dt, smoothed: this.stance }) : null;
     const victim = pid && s.dying <= 0 ? this.scene.victim(pid) : null;
+    // A hero with a blaster: their powers' leans and gestures over the gun's pose.
+    const gact = this.gunHero && pid && s.dying <= 0 ? gunHeroPose(this.scene, pid, this.gunHero) : null;
     const stance = this.held?.stance === 'pistol' ? this.heldPoses.pistol : this.heldPoses.rifle;
-    this.sprint += ((s.sprint && held === 'gun' ? 1 : 0) - this.sprint) * clamp01(dt * 10);
+    this.sprint += (((s.sprint || (gact?.carry ?? 0) > 0.5) && held === 'gun' ? 1 : 0) - this.sprint) * clamp01(dt * 10);
     this.reload += ((s.reloading && held === 'gun' ? 1 : 0) - this.reload) * clamp01(dt * 12);
     this.reloadT = s.reloading ? this.reloadT + dt : 0;
     // Strides get longer as it speeds up; the phase runs with the ground covered.
@@ -248,6 +254,16 @@ class Poser {
       return;
     }
     this.deathAt = -1;
+    // Knocked flat (a Wookiee's charge): down on their back a moment, then up again.
+    if (victim?.kind === 'down') {
+      const t = this.scene.now - victim.at;
+      const len = victim.until - victim.at;
+      const k = t < 0.25 ? smooth(clamp01(t / 0.25)) : t > len - 0.35 ? smooth(clamp01((len - t) / 0.35)) : 1;
+      this.deathDir = -1;
+      this.fall(0.82 * k);
+      if (held === 'other') this.inFist();
+      return;
+    }
 
     // The hips: down to crouch and further to slide, a bob and a sway as it steps, leaning back to slide.
     const bob = moving * pace(G.bob, run) * (1 - Math.cos(ph * 2)) * 0.5;
@@ -255,7 +271,7 @@ class Poser {
     rot(q1, -0.55 * slide, 0, 0);
     hips.quaternion.multiply(q1);
     // The back: leaning into a run, a crouch; a twist to shoulder a gun; breathing.
-    const lean = moving * pace(G.lean, run) + crouch * 0.16 * (1 - slide) + 0.3 * slide + (sab?.key.lean ?? 0) + (victim ? this.victimLean(victim) : 0);
+    const lean = moving * pace(G.lean, run) + crouch * 0.16 * (1 - slide) + 0.3 * slide + (sab?.key.lean ?? 0) + (gact?.lean ?? 0) + (victim ? this.victimLean(victim) : 0);
     const breathe = Math.sin(s.time * 1.9) * 0.012;
     const twist = held === 'gun' ? stance.twist * (1 - this.sprint) : (sab?.key.twist ?? 0);
     rot(q1, lean * 0.45, twist * 0.4, 0);
@@ -275,6 +291,7 @@ class Poser {
     if (sab) this.poseSaber(sab, look, aimQ, bodyQ, scale);
     else if (twoHanded) this.poseHeld(s, aimQ, bodyQ, scale);
     else this.swingArms(s, ph, moving, run, air);
+    if (gact && held === 'gun') this.gunGesture(gact, aimQ, bodyQ, scale);
 
     this.legs(s, ph, moving, run, crouch, slide, air, bodyQ);
     if (victim) this.victimPose(victim, s, bodyQ, scale);
@@ -284,8 +301,9 @@ class Poser {
     rot(q1, -look, s.headYaw, held === 'gun' ? stance.cheek * (s.sights ?? 0) : 0).premultiply(bodyQ);
     j.neck.getWorldQuaternion(q2);
     head.quaternion.copy(q2.invert().multiply(q1));
-    // Choked: the head thrown back.
+    // Choked: the head thrown back. Roaring: too.
     if (victim?.kind === 'choke') head.quaternion.multiply(rot(q1, -0.55 + Math.sin(s.time * 13) * 0.08, Math.sin(s.time * 7) * 0.2, 0));
+    if (gact?.headBack) head.quaternion.multiply(rot(q1, -gact.headBack, 0, 0));
     if (held === 'other' && !victim) this.inFist();
   }
 
@@ -390,6 +408,34 @@ class Poser {
     }
     const pole = v1.set(0.5 * sign, -0.85, -0.1 + 0.2 * g.w).applyQuaternion(bodyQ);
     this.limb(side, at, q, pole, false);
+  }
+
+  /**
+   * A hero with a blaster: the free hand off the gun to a gesture (`g.w` of the way from where it
+   * holds the gun), and their hands as drawn, for the effects (the flamethrower from the wrist).
+   */
+  private gunGesture(pose: GunHeroPose, aimQ: Quat, bodyQ: Quat, scale: number) {
+    const j = this.j;
+    const g = pose.left;
+    if (g && g.w > 0.02) {
+      const chest = j.chest;
+      j.gripL.updateWorldMatrix(true, false);
+      const from = j.gripL.getWorldPosition(new Vec3());
+      const to = new Vec3().fromArray(g.at).multiplyScalar(scale).applyQuaternion(aimQ).add(chest.localToWorld(new Vec3().copy(this.pivot)));
+      const at = from.lerp(to, g.w);
+      const shoulder = j.upperArmL.getWorldPosition(new Vec3());
+      const aimFwd = new Vec3(0, 0, 1).applyQuaternion(aimQ);
+      const pointing = g.open ? new Vec3(0, 1, 0).lerp(aimFwd, 0.2).normalize() : aimFwd.clone().lerp(UP, 0.5).normalize();
+      const q = this.fistQ(pointing, at, shoulder, new Quat());
+      this.limb('L', at, q, v1.set(0.5, -0.85, -0.1 + 0.2 * g.w).applyQuaternion(bodyQ), false);
+    }
+    const pid = this.fig.player;
+    if (!pid) return;
+    j.handL.updateWorldMatrix(true, false);
+    j.handR.updateWorldMatrix(true, false);
+    const l = j.handL.getWorldPosition(new Vec3());
+    const r = j.handR.getWorldPosition(new Vec3());
+    this.scene.hands.set(pid, { l: { x: l.x, y: l.y, z: l.z }, r: { x: r.x, y: r.y, z: r.z }, t: this.scene.now });
   }
 
   /** Leaning with what a power does to them: back choked, forward stunned. */

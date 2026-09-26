@@ -25,6 +25,12 @@ export const MSG = {
   power: 'bfh.power',
   /** Lightning under way: who it's striking now (`Zap`). */
   zap: 'bfh.zap',
+  /** A rocket in flight: where it is now (`Rocket`). */
+  rocket: 'bfh.rocket',
+  /** Ground set burning (the flamethrower's): where, for how long (`Burn`). */
+  burn: 'bfh.burn',
+  /** Bowcaster quarrels burst this step: where (`Burn`, `t` 0). */
+  burst: 'bfh.burst',
 } as const;
 
 /** A swing: who, which of the combo (0, 1, 2), how long it takes (seconds). */
@@ -69,10 +75,16 @@ export interface Cut {
  * - `chain`: `path` the ones it leapt between, in order.
  * - `soresu`, `rage`, `aura`: on for `t` seconds, and off.
  * - `rush`, `leap`: the move began; `land`: a leap came down at `at`, `hits` thrown.
+ * - `scatter`: quarrels from `p`, bursting at `path` (each "x,y,z").
+ * - `charge`: the bull rush began; `knock`: `target` flattened for `t` seconds.
+ * - `roar`: on (enraged for `t` seconds, `hits` staggered) and off.
+ * - `rocket`: launched from `from` along `dir`, seeking `target`, numbered `t`; off (`on: false`,
+ *   `t` its number) where it went off, `at`.
+ * - `flame`: on (held) and off. `jetpack`: lit for `t` seconds of fuel, and out.
  */
 export interface Power {
   p: string;
-  k: PowerId | 'land';
+  k: PowerId | 'land' | 'knock';
   on?: boolean;
   t?: number;
   target?: string;
@@ -82,6 +94,19 @@ export interface Power {
   from?: P3;
   dist?: number;
   at?: P3;
+}
+
+/** A rocket (numbered `n`) in flight: where it is and which way it's going. */
+export interface Rocket {
+  n: number;
+  at: P3;
+  dir: P3;
+}
+
+/** Places: burning ground (for `t` seconds), or quarrels that burst (`t` 0). */
+export interface Burn {
+  list: P3[];
+  t: number;
 }
 
 /** Lightning from `p`'s hands: who it's striking now (none: into the air ahead). */

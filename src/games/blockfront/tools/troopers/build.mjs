@@ -37,9 +37,11 @@
  * - Budgets (checked): <= 25000 triangles and <= 300 KB per file.
  *
  * Here besides:
- * - Builds may be taller (`shin`, `thigh`: rows added to the legs, Darth Voxel's) or hunched
- *   (`hunch`: the neck and head forward and down, the Emperor's). Hitboxes are the game's, the same
- *   for all.
+ * - Builds may be taller (`shin`, `thigh`: rows added to the legs, Darth Voxel's; `torso` to the
+ *   chest too, Chewblocca's, the tallest at 2.13 m) or hunched (`hunch`: the neck and head forward
+ *   and down, the Emperor's). Hitboxes are the game's, the same for all.
+ * - Fur (Chewblocca's) is a coat a voxel thick in streaks of three shades (`furOf`), with strands
+ *   hanging from it (`shag`): the heaviest figure, as strands don't merge into bigger faces.
  * - Heads are drawn in a space of their own (the chin's row 0, the face's row k = FACE, x across)
  *   and set on the neck where the build puts it: faces, hair, helmets and hoods.
  * - Armour is plates a voxel proud of the undersuit (`coat`), the black suit showing between them
@@ -65,6 +67,8 @@ const OUT = argv.find((a) => a.startsWith('--out='))?.slice(6) ?? join(HERE, '..
 const DU = 1 / 24;
 const MAX_TRIS = 25000;
 const MAX_BYTES = 300 * 1024;
+/** Heights allowed (metres, to the top of the head): Chewblocca the tallest. */
+const MIN_HEIGHT = 1.7, MAX_HEIGHT = 2.15;
 
 // ---------------------------------------------------------------------------------------------
 // The rig
@@ -176,7 +180,8 @@ function hash(i, j, k, salt = 0) {
 // Builds: widths in design units. Arms and legs are even or odd as their widths say; the arms
 // hang beside the chest (`sh` its half-width), the legs from under the pelvis a voxel either side
 // of the middle. `bust` rounds out the chest; `shin` and `thigh` add rows to the legs (all above
-// rises with them); `hunch` brings the neck and head forward (and the head a row down).
+// rises with them), `torso` to the chest (the upper arms longer with it); `hunch` brings the neck
+// and head forward (and the head a row down).
 
 const BUILDS = {
   slim: { sh: 7, waist: 6, hip: 6, arm: 4, leg: 5, belly: 0 },
@@ -188,6 +193,7 @@ const BUILDS = {
   broadF: { sh: 8, waist: 6, hip: 7, arm: 6, leg: 6, belly: 0, bust: 1 },
   heavyF: { sh: 8, waist: 7, hip: 7, arm: 6, leg: 6, belly: 1, bust: 1 },
   lord: { sh: 9, waist: 7, hip: 7, arm: 6, leg: 6, belly: 0, shin: 1, thigh: 1 },
+  wookiee: { sh: 9, waist: 8, hip: 8, arm: 6, leg: 6, belly: 0, shin: 1, thigh: 1, torso: 1 },
   old: { sh: 7, waist: 6, hip: 6, arm: 4, leg: 5, belly: 1, hunch: 2 },
 };
 
@@ -198,8 +204,8 @@ const BUILDS = {
  * hangs from the thighs.
  */
 function heights(b) {
-  const s = b.shin ?? 0, t = s + (b.thigh ?? 0);
-  return { ankle: 4, knee: 10 + s, pelvis: 14 + t, split: 15 + t, hipJoint: 16.5 + t, hips: 17 + t, belt: 18 + t, spine: 19 + t, chest: 23 + t, shoulder: 29 + t, chestTop: 31 + t, neck: 31 + t, head: 32 + t, crown: 44 + t, elbow: 23 + t, wrist: 17.5 + t };
+  const s = b.shin ?? 0, t = s + (b.thigh ?? 0), u = t + (b.torso ?? 0);
+  return { ankle: 4, knee: 10 + s, pelvis: 14 + t, split: 15 + t, hipJoint: 16.5 + t, hips: 17 + t, belt: 18 + t, spine: 19 + t, chest: 23 + t, shoulder: 29 + u, chestTop: 31 + u, neck: 31 + u, head: 32 + u, crown: 44 + u, elbow: 23 + t, wrist: 17.5 + t };
 }
 /** The torso's front row of cells (k), and the head's face row (in its own space). */
 const F = 3;
@@ -739,6 +745,108 @@ function lordHelmet(hv) {
   for (let i = -3; i < 3; i++) set(i, -1, faceK(hv, i, 0), 'grille');
 }
 
+/**
+ * Fur's colour at a cell: mostly the fur, lighter and darker streaks mixed in, each three or four
+ * voxels down (staggered column by column), so it reads as hair (`dark`: more of the darker).
+ */
+const furOf = (dark = 0) => (i, j, k) => {
+  const h = hash(i, Math.floor((j + ((i * 5 + k * 3) & 3)) / 4), k, 11);
+  return h < 0.22 + dark ? 'furDark' : h > 0.84 - dark * 0.5 ? 'furLight' : 'fur';
+};
+
+/**
+ * Shaggy fur on a part: strands hanging from its sides where `where` accepts, from one cell in
+ * so many (`density`): a voxel out from a side face and `len` down from there, so the fur hangs.
+ */
+function shag(vox, part, colour, density, where = () => true, len = 2) {
+  const cells = vox.parts.get(part);
+  const add = [];
+  for (const key of cells.keys()) {
+    const [i, j, k] = cellOf(key);
+    if (hash(i, j, k, 23) > density) continue;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const q = [i + dx, j, k + dz];
+      if (cells.has(cellKey(q[0], q[1], q[2])) || !where(q.map(C))) continue;
+      for (let d = 0; d < len; d++) add.push([q[0], q[1] - d, q[2]]);
+      break;
+    }
+  }
+  for (const [i, j, k] of add) if (j >= 0 && !cells.has(cellKey(i, j, k))) vox.set(part, i, j, k, colour(i, j, k));
+}
+
+/**
+ * Chewblocca's head: tall and long, all fur; a lighter muzzle out from the lower face, its dark
+ * nose on the tip and the mouth under it; small eyes deep under a heavy brow; the mane round it,
+ * falling behind and at the sides to the shoulders, shaggy.
+ */
+function wookieeHead(hv) {
+  const set = (i, j, k, c) => hv.set('head', i, j, k, c);
+  fill(hv, 'head', [-6, 0, -6], [6, 14, 5], furOf(0), (p) => inRound(p, [-6, 0, -6], [6, 14, 5], [2.6, 3.2, 2.6]) && !(p[1] < 1 && Math.abs(p[0]) > 4.2));
+  fill(hv, 'head', [-4, 0, 2], [4, 7, 8], (i, j, k) => (hash(i, j, k, 5) < 0.2 ? 'fur' : 'furLight'), (p) => inRound(p, [-3.6, -0.4, 2], [3.6, 6.4, 7.8], [1.6, 1.6, 1.6]));
+  for (const i of [-2, -1, 0, 1]) for (const j of [4, 5]) set(i, j, faceK(hv, i, j), 'nose');
+  for (const i of [-1, 0]) set(i, 5, faceK(hv, i, 5) + 1, 'nose');
+  for (let i = -3; i < 3; i++) set(i, 2, faceK(hv, i, 2), 'mouth');
+  for (const i of [-2, 1]) set(i, 1, faceK(hv, i, 1), 'mouth');
+  // Lighter fur round the eyes, the eyes set in it.
+  for (const i of [0, 1, 2, 3, -1, -2, -3, -4]) for (const j of [7, 8]) set(i, j, faceK(hv, i, j), 'furLight');
+  for (const i of [1, 2, -2, -3]) {
+    const k = faceK(hv, i, 8);
+    hv.del('head', i, 8, k);
+    set(i, 8, k - 1, i === 1 || i === -2 ? 'eyeBlue' : 'eye');
+  }
+  for (let i = -5; i < 5; i++) for (const j of [9, 10]) set(i, j, faceK(hv, i, j) + 1, j === 9 ? 'furDark' : furOf(0)(i, j, 9));
+  // The mane: a shell round the head but the face, down to the shoulders behind and at the sides.
+  for (let i = -9; i < 9; i++)
+    for (let j = -5; j < 17; j++)
+      for (let k = -10; k < 7; k++) {
+        const p = [C(i), C(j), C(k)];
+        if (hv.filled(i, j, k, 'head')) continue;
+        if (!inRound(p, [-7.6, -5, -7.8], [7.6, 15.6, 4], [3, 3.2, 3])) continue;
+        if (j < 0 && p[2] > -1) continue;
+        if (p[2] > 1 && j < 11 && Math.abs(p[0]) < 6) continue;
+        set(i, j, k, j < 2 ? furOf(0.25)(i, j, k) : furOf(0)(i, j, k));
+      }
+  shag(hv, 'head', (i, j, k) => furOf(0.1)(i, j, k), 0.14, (p) => !(p[2] > 1 && p[1] < 11 && Math.abs(p[0]) < 6));
+}
+
+/**
+ * Boba Fetch's helmet: a green-grey dome closed to the chin, dented and scratched, the T of its
+ * black visor across the eyes and down to the chin, yellowish cheeks, a disc over each ear, and
+ * the rangefinder's stalk up from the right one, its sight at the top, its lens lit red.
+ */
+function bountyHelmet(hv) {
+  const set = (i, j, k, c) => hv.set('head', i, j, k, c);
+  fill(hv, 'head', [-8, -1, -8], [8, 14, 7], (i, j, k) => (j < 5 && k > -2 ? 'mandoCheek' : 'mandoHelmet'), (p) => inRound(p, [-7, -1, -7.2], [7, 13.2, 6], [3, 3.8, 3]) && !(p[1] < 2 && p[2] > 2 && Math.abs(p[0]) > 5));
+  // The visor.
+  const visor = (i, j) => (j >= 6 && j <= 7 && Math.abs(C(i)) < 5.5) || (j >= 1 && j < 6 && Math.abs(C(i)) < 1.2);
+  for (let i = -6; i < 6; i++)
+    for (let j = 1; j < 8; j++)
+      if (visor(i, j)) {
+        const k = faceK(hv, i, j);
+        hv.del('head', i, j, k);
+        set(i, j, k - 1, 'visor');
+      }
+  // A dark rim over the visor's bar.
+  for (let i = -6; i < 6; i++) set(i, 8, faceK(hv, i, 8), 'mandoDark');
+  // The dent over the left brow, and a few scratches.
+  for (const i of [3, 4])
+    for (const k of [2, 3]) {
+      let top = null;
+      for (let j = 15; j > 0; j--) if (hv.filled(i, j, k, 'head')) { top = j; break; }
+      if (top !== null) {
+        hv.del('head', i, top, k);
+        set(i, top - 1, k, 'dent');
+      }
+    }
+  hv.recolour('head', (i, j, k, c) => (c === 'mandoHelmet' && hash(Math.floor(i / 2), Math.floor(j / 2), Math.floor(k / 2), 31) < 0.06 && hash(i, j, k, 32) < 0.5 ? 'dent' : undefined));
+  // The ears, and the rangefinder on the right.
+  for (const m of [1, -1]) for (let j = 3; j < 8; j++) for (let k = -3; k < 2; k++) if ((j - 5) ** 2 + (k + 1) ** 2 < 5) set(m > 0 ? 7 : -8, j, k, j === 5 && k === -1 ? 'mandoDark' : 'mandoCheek');
+  for (let j = 7; j < 15; j++) set(-9, j, -1, 'mandoDark');
+  block(hv, 'head', [-10, 14, -2], [-9, 15, 1], 'mandoDark');
+  set(-10, 14, 2, 'rangeGlow');
+  set(-9, 14, 2, 'rangeGlow');
+}
+
 // ---------------------------------------------------------------------------------------------
 // Costume helpers
 
@@ -784,7 +892,8 @@ function pouch(vox, part, i0, i1, j0, j1, colour, flap) {
 /**
  * A strap across the torso, front and back, from over one shoulder (`from`: 1 the left, -1 the
  * right) to the other hip: a voxel proud where it's within `w` of the line between them. Returns
- * a point along it, `at(t)` (t from 0 at the shoulder to 1 at the hip), for what hangs on it.
+ * a point along it, `at(t)` (t from 0 at the shoulder to 1 at the hip), for what hangs on it, and
+ * `at.dist(x, y)`, how far a point is from its line.
  */
 function sash(vox, s, colour, { from = 1, w = 1.4 } = {}) {
   const { Y } = s;
@@ -792,7 +901,9 @@ function sash(vox, s, colour, { from = 1, w = 1.4 } = {}) {
   const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
   const dist = (x, y) => Math.abs((x - x0) * dy - (y - y0) * dx) / len;
   for (const part of ['chest', 'spine']) coat(vox, part, colour, (p) => dist(p[0], p[1]) < w && (part === 'chest' ? p[1] > Y.chest - 0.5 : p[1] < Y.chest + 0.5));
-  return (t) => [x0 + dx * t, y0 + dy * t];
+  const at = (t) => [x0 + dx * t, y0 + dy * t];
+  at.dist = dist;
+  return at;
 }
 
 /**
@@ -1120,6 +1231,81 @@ function emperor(vox, s) {
   }
 }
 
+/**
+ * Chewblocca: fur all over, a voxel thick and shaggy, darker at the fists and feet; a leather
+ * bandolier from the left shoulder to the right hip, its metal boxes along it. The fists keep
+ * their size (they hold his bowcaster).
+ */
+function wookiee(vox, s) {
+  const { Y } = s;
+  const dark = (part) => (part.startsWith('hand') || part.startsWith('foot') ? 0.45 : part.startsWith('lower') ? 0.12 : 0);
+  const furred = BONES.filter((part) => part !== 'head' && !part.startsWith('hand'));
+  for (const part of BONES) if (part !== 'head') vox.recolour(part, (i, j, k, c) => (c === 'gloveCrease' ? 'furCrease' : furOf(dark(part))(i, j, k)));
+  for (const part of furred) coat(vox, part, furOf(dark(part)), (p) => p[1] > 0);
+  const at = sash(vox, s, 'bandolier', { from: 1, w: 1.7 });
+  for (let n = 1; n < 8; n++) {
+    const [x, y] = at(n / 8.5).map(Math.floor);
+    const part = y < Y.chest ? 'spine' : 'chest';
+    const k = frontOf(vox, part, x, y);
+    if (k !== null) block(vox, part, [x - 1, y - 1, k + 1], [x, y, k + 1], 'bandBox', null), vox.set(part, x - 1, y, k + 1, 'bandBoxDark'), vox.set(part, x, y, k + 1, 'bandBoxDark');
+  }
+  for (const part of furred) shag(vox, part, furOf(dark(part)), part === 'chest' || part === 'spine' ? 0.1 : 0.08, (p) => !(part === 'chest' || part === 'spine') || at.dist(p[0], p[1]) > 2.4);
+}
+
+/**
+ * Boba Fetch: a grey flight suit; green-grey armour over it (two plates on the chest, the gap
+ * between them showing the suit, a gold collar and a gold box, a plate on the belly), a maroon
+ * pauldron on the left shoulder, a ragged cape behind it, gauntlets, knee pads, a belt of
+ * pouches, braids hanging at the right hip; and the jetpack: two tanks, their nozzles' rings lit,
+ * a body between them, a missile on top.
+ */
+function bounty(vox, s) {
+  const { b, Y } = s;
+  const L = limbs(b);
+  vox.recolour('neck', () => 'suitDark');
+  coat(vox, 'chest', 'mando', (p) => p[2] > 1.5 && p[1] > Y.chest + 1.5 && p[1] < Y.chestTop - 0.5 && Math.abs(p[0]) > 0.9 && Math.abs(p[0]) < b.sh - 0.5);
+  coat(vox, 'spine', 'mando', (p) => p[2] > 2 && p[1] > Y.spine + 0.5 && p[1] < Y.chest - 0.5 && Math.abs(p[0]) < 3.5);
+  for (let i = -3; i < 3; i++) for (let k = -4; k < 2; k++) if (!(i >= -2 && i < 2 && k >= -3 && k < 1)) vox.set('chest', i, Y.chestTop, k, 'gold');
+  const ck = frontOf(vox, 'chest', -4, Y.chest + 5);
+  block(vox, 'chest', [-5, Y.chest + 4, ck + 1], [-4, Y.chest + 5, ck + 1], 'gold');
+  // The pauldron: a rounded maroon cap on the left shoulder, a darker rim.
+  const [x0, x1] = [b.sh - 1, b.sh + b.arm + 2];
+  const lo = [x0, Y.shoulder - 3, -b.arm / 2 - 1.5], hi = [x1, Y.chestTop + 1.5, b.arm / 2 + 1.5];
+  fill(vox, 'upperArmL', lo, hi, (i, j) => (j < Y.shoulder - 1 ? 'maroonDark' : 'maroon'), (p) => inRound(p, [lo[0], lo[1] - 3, lo[2]], hi, [2.2, 2.2, 2.2]) && p[0] > b.sh - 0.5 + (p[1] < Y.chestTop - 0.5 ? 1 : 0));
+  // Gauntlets, two keys lit on the left one; gloves; knee pads.
+  for (const [side] of SIDES) coat(vox, `lowerArm${side}`, 'mando', (p) => p[1] > Y.wrist + 0.5 && p[1] < Y.elbow - 0.5, { axes: 'xz' });
+  const gx = Math.floor(L.ax) + 3;
+  vox.set('lowerArmL', gx, Y.elbow - 3, 0, 'gold');
+  vox.set('lowerArmL', gx, Y.elbow - 3, -1, 'gauntletRed');
+  for (const [side] of SIDES) coat(vox, `lowerLeg${side}`, 'mando', (p) => p[2] > L.lz1 - 0.5 && p[1] > Y.knee - 1.5 && p[1] < Y.knee + 2.5, { axes: 'xz' });
+  // The belt, pouches round it; braids hanging at the right hip.
+  belt(vox, s, 'belt', { buckle: 'mandoDark', rows: 2, bh: 2 });
+  for (const [, m] of SIDES) for (const x of [3, 5]) block(vox, 'hips', [m > 0 ? x - 1 : -x, Y.belt - 2, 4], [m > 0 ? x : -x + 1, Y.belt - 1, 5], 'pouch');
+  for (const z of [-2, 0, 2]) for (let j = Y.knee + 1 + (z === 0 ? 0 : 1); j < Y.pelvis + 1; j++) vox.set('upperLegR', -L.lx1 - 1, j, z, (j + z) % 2 ? 'braid' : 'braidDark');
+  // The jetpack: straps over the shoulders; a dark core on the back, a big tank either side of it
+  // standing off the back, domed on top, a nozzle under each, its ring lit; the missile on top.
+  const back = backOf(vox, 'chest', 0, Y.chest + 4);
+  for (const [, m] of SIDES) for (let j = Y.chest + 1; j <= Y.chestTop; j++) for (let k = -4; k < 5; k++) {
+    const i = m > 0 ? 3 : -4;
+    const surf = (kk) => vox.filled(i, j, kk, 'chest') || vox.filled(i + m, j, kk, 'chest');
+    if (!surf(k) && (surf(k - 1) || surf(k + 1) || vox.filled(i, j - 1, k, 'chest'))) vox.set('chest', i, j, k, 'jetDark'), vox.set('chest', i + m, j, k, 'jetDark');
+  }
+  block(vox, 'chest', [-2, Y.spine + 1, back - 4], [1, Y.chestTop - 1, back - 1], 'jetDark', 'nozzle');
+  const cz = back - 4;
+  for (const cx of [-3.8, 3.8]) {
+    fill(vox, 'chest', [cx - 3, Y.spine + 1, cz - 3], [cx + 3, Y.chestTop + 3, cz + 3], (i, j) => (j === Y.chest || j === Y.chestTop - 1 ? 'jetDark' : 'jet'), (p) => (p[0] - cx) ** 2 + (p[2] - cz) ** 2 + Math.max(0, p[1] - (Y.chestTop + 0.5)) ** 2 * 1.4 <= 5.3);
+    fill(vox, 'chest', [cx - 2, Y.spine - 2, cz - 2], [cx + 2, Y.spine + 1, cz + 2], (i, j) => (j === Y.spine - 2 ? 'jetGlow' : 'nozzle'), (p) => (p[0] - cx) ** 2 + (p[2] - cz) ** 2 <= (p[1] < Y.spine - 1 ? 3.2 : 2.2));
+  }
+  for (let j = Y.chestTop; j < Y.chestTop + 6; j++) for (const i of [-1, 0]) for (const k of [cz - 1, cz]) vox.set('chest', i, j, k, j > Y.chestTop + 3 ? 'missileTip' : 'missile');
+  // The cape: a ragged strip over the left shoulder, hanging behind it to the waist.
+  for (let j = Y.spine + 1; j <= Y.chestTop; j++)
+    for (let i = 5; i < 10; i++) {
+      if (j < Y.spine + 3 && hash(i, j, 0, 41) < 0.5) continue;
+      vox.set('chest', i, j, back - 1, 'cape');
+      if (j === Y.chestTop) for (let k = back; k < 1; k++) vox.set('chest', i, j, k, 'cape');
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The figures
 
@@ -1219,6 +1405,11 @@ const FIGURES = [
     colours: { skin: 0xdcae8e, hair: 0xd9d5cc, beard: 0xe4e0d8, beardDark: 0xbdb7ac, brow: 0xcfc9bd, shirt: 0xd9ccaa, tunic: 0xd9ccaa, tunicShade: 0xb9a985, sleeve: 0xd9ccaa, pants: 0xcdbf9b, shoes: 0x3a2a1c, obi: 0xb49a6c, belt: 0x4a3020, robe: 0x5c3d25, robeDark: 0x46301d, robeEdge: 0x6b4a2e },
   },
   {
+    id: 'chewie', name: 'Chewblocca', hero: true, build: 'wookiee', dress: wookiee, o: { gloves: true, shoeStyle: 'boot' },
+    head: (hv) => wookieeHead(hv),
+    colours: {},
+  },
+  {
     id: 'vader', name: 'Darth Voxel', hero: true, build: 'lord', dress: vader, o: { gloves: true },
     head: (hv) => lordHelmet(hv),
     colours: { shirt: 0x121214, pants: 0x121214, shoes: 0x0e0e11, glove: 0x0e0e10 },
@@ -1227,6 +1418,11 @@ const FIGURES = [
     id: 'emperor', name: 'Emperor Palpablock', hero: true, build: 'old', dress: emperor,
     head: (hv) => (skull(hv), face(hv, { wrinkles: true, eye: 'eyeGlow', eyeWhite: 'eyeGlowDim', ears: false }), oldFace(hv), hood(hv, 'robe', { deep: 3.4, thick: 1.8, peak: 1.5, open: 4.7 })),
     colours: { skin: 0xcfc0a6, hair: 0x8a8580, shirt: 0x131116, pants: 0x131116, shoes: 0x0e0d10 },
+  },
+  {
+    id: 'boba', name: 'Boba Fetch', hero: true, build: 'broad', dress: bounty, o: { gloves: true },
+    head: (hv) => bountyHelmet(hv),
+    colours: { shirt: 0x6e6d64, pants: 0x6e6d64, shoes: 0x3a342c, glove: 0x4a3322, belt: 0x2e2a24, pouch: 0x4a4232, cape: 0x5a4b33 },
   },
 ];
 
@@ -1381,6 +1577,37 @@ function palette(d) {
   add('cape', 0x0b0b0d, { rough: 0.75, vary: 0.03 });
   add('capeHem', 0x070708, { rough: 0.75, vary: 0 });
   add('capeFold', 0x060607, { rough: 0.8, vary: 0 });
+  // Chewblocca: fur in three shades, a darker crease, the nose glossy; the bandolier's leather and metal.
+  add('fur', 0x5e3d23, { rough: 0.95, vary: 0.05 });
+  add('furLight', 0x7c5733, { rough: 0.95, vary: 0.05 });
+  add('furDark', 0x3e2816, { rough: 0.95, vary: 0.04 });
+  add('furCrease', 0x2e1e12, { rough: 0.95, vary: 0 });
+  add('nose', 0x141010, { rough: 0.25, vary: 0 });
+  add('bandolier', 0x4a3020, { rough: 0.5, vary: 0.04 });
+  add('bandBox', 0x8e949a, { rough: 0.3, metal: 0.8, vary: 0.02 });
+  add('bandBoxDark', 0x5a5e62, { rough: 0.35, metal: 0.7, vary: 0 });
+  // Boba Fetch: green-grey armour and helmet, yellowish cheeks, a black visor, the maroon pauldron,
+  // the jetpack; the rangefinder's lens and the nozzles' rings lit.
+  add('mando', 0x5f6b4a, { rough: 0.45, metal: 0.25, vary: 0.04 });
+  add('mandoHelmet', 0x62704c, { rough: 0.4, metal: 0.25, vary: 0.04 });
+  add('mandoDark', 0x3c4430, { rough: 0.45, metal: 0.25, vary: 0.02 });
+  add('mandoCheek', 0x8e8b5c, { rough: 0.45, metal: 0.2, vary: 0.03 });
+  add('dent', 0x353b2c, { rough: 0.6, vary: 0.02 });
+  add('visor', 0x0a0b0c, { rough: 0.06, metal: 0.5, vary: 0 });
+  add('suitDark', 0x3e3d38, { rough: 0.8, vary: 0.03 });
+  add('maroon', 0x6e2622, { rough: 0.5, metal: 0.2, vary: 0.04 });
+  add('maroonDark', 0x521a17, { rough: 0.5, metal: 0.2, vary: 0.02 });
+  add('gauntletRed', 0xb02a22, { rough: 0.4, vary: 0 });
+  add('gold', 0xc9a13a, { rough: 0.3, metal: 0.9, vary: 0.03 });
+  add('braid', 0x5a4430, { rough: 0.9, vary: 0.04 });
+  add('braidDark', 0x3a2a1c, { rough: 0.9, vary: 0.03 });
+  add('jet', 0x6c7a82, { rough: 0.4, metal: 0.35, vary: 0.03 });
+  add('jetDark', 0x3e4436, { rough: 0.45, metal: 0.3, vary: 0.02 });
+  add('nozzle', 0x2a2a2c, { rough: 0.35, metal: 0.7, vary: 0 });
+  add('missile', 0xc8c8c0, { rough: 0.4, metal: 0.3, vary: 0.02 });
+  add('missileTip', 0xb52a22, { rough: 0.4, vary: 0 });
+  add('jetGlow', 0xff8a2a, { rough: 0.3, glow: 1, vary: 0 });
+  add('rangeGlow', 0xff3020, { rough: 0.3, glow: 0.9, vary: 0 });
   for (const [name, rgb, opts] of glowing) P.add(name, rgb, opts);
   return P;
 }
@@ -1560,7 +1787,7 @@ function validate(buf, d, at) {
   if (tris > MAX_TRIS) fail(`${tris} triangles (budget ${MAX_TRIS})`);
   if (buf.length > MAX_BYTES) fail(`${buf.length} bytes (budget ${MAX_BYTES})`);
   const height = (hi - lo) / SCALE;
-  if (lo !== 0 || height < 1.7 || height > 2.05) fail(`height ${lo / SCALE}..${hi / SCALE}`);
+  if (lo !== 0 || height < MIN_HEIGHT || height > MAX_HEIGHT) fail(`height ${lo / SCALE}..${hi / SCALE}`);
   return { tris, count, height };
 }
 

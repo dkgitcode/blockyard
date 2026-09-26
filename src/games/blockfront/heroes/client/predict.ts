@@ -1,7 +1,7 @@
 import type { Client } from '@platform/client';
 import type { firstPerson } from '@platform/client/kits';
 import { HERO_ABILITY, type HeroMove } from '../abilities';
-import { heroByNumber } from '../defs';
+import { heroByNumber, usesSaber } from '../defs';
 import { POWERS, SABER, SWING_PITCH, swingLength } from '../tuning';
 import type { Guard, Swing } from '../wire';
 import type { HeroScene } from './state';
@@ -64,7 +64,8 @@ export class OwnSaber {
     const me = client.me;
     const id = scene.localId;
     const m = me.abilities[HERO_ABILITY] as unknown as HeroMove | undefined;
-    if (!id || !m || !heroByNumber(m.h) || me.dead || client.replay.playing) return this.rest(scene, id);
+    // (Only a saber runs ahead: a blaster's shots are the gun kit's, predicted its own way.)
+    if (!id || !m || !usesSaber(heroByNumber(m.h)) || me.dead || client.replay.playing) return this.rest(scene, id);
     const now = scene.now;
     const lmb = client.input.button(0);
     const rmb = client.input.button(2);

@@ -1,7 +1,7 @@
 import type { Bot, GameContext, Player, Vec3 } from '@platform';
 import type { BotMind, ShooterBots } from '@platform/kits';
 import { HERO_ABILITY, coolOf, type HeroMove } from './abilities';
-import { HEROES, type HeroId, type PowerId } from './defs';
+import { HEROES, usesSaber, type HeroId, type PowerId } from './defs';
 import type { Powers } from './powers';
 import type { Sabers } from './saber';
 import { GUARD, POWERS, SABER } from './tuning';
@@ -31,6 +31,8 @@ interface Plan {
   zapUntil: number;
   /** When it last thought about a power, and the next time it may. */
   nextPower: number;
+  /** Climbing on the jetpack until (Space held). */
+  climbUntil: number;
   /** Falling back until (host time; 0: not). */
   back: number;
 }
@@ -52,7 +54,7 @@ export function heroBots(game: GameContext, rules: HeroBotRules) {
   const plans = new Map<string, Plan>();
   const plan = (b: Bot) => {
     let p = plans.get(b.id);
-    if (!p) plans.set(b.id, (p = { guardUntil: 0, guardAgain: 0, zapUntil: 0, nextPower: 0, back: 0 }));
+    if (!p) plans.set(b.id, (p = { guardUntil: 0, guardAgain: 0, zapUntil: 0, nextPower: 0, back: 0, climbUntil: 0 }));
     return p;
   };
 
@@ -108,6 +110,18 @@ export function heroBots(game: GameContext, rules: HeroBotRules) {
         return d < POWERS.chain.range - 2 && d > 4;
       case 'aura':
         return around(bot, POWERS.aura.radius - 0.5).length >= 2 || (d < 3.5 && bot.health < bot.maxHealth * 0.6);
+      case 'scatter':
+        return around(bot, 12, 25).length >= 2 || d < 8;
+      case 'charge':
+        return (d > 3.5 && d < 10) || around(bot, 8, 30).length >= 2;
+      case 'roar':
+        return around(bot, POWERS.roar.radius - 0.5).length >= 2 || (hurtLately && bot.health < bot.maxHealth * 0.5);
+      case 'rocket':
+        return d > 5 && d < POWERS.rocket.range - 5;
+      case 'flame':
+        return d < POWERS.flame.range - 1;
+      case 'jetpack':
+        return d > 11 || (hurtLately && bot.health < bot.maxHealth * 0.6);
     }
   };
 
@@ -130,23 +144,30 @@ export function heroBots(game: GameContext, rules: HeroBotRules) {
         return (dx * -Math.sin(bot.yaw) + dz * -Math.cos(bot.yaw)) / (d || 1) > Math.cos(50 * DEG);
       })();
       const inReach = d < SABER.reach - 0.2 && facing;
-      // Lightning under way: keep holding while there's someone in front, and it lasts.
-      const lightning = HEROES[id].powers[0].id === 'lightning';
-      if (lightning && pl.zapUntil > now) {
-        c.hold('KeyQ', d < POWERS.lightning.range && facing);
-        c.button(0, false);
-        c.button(2, false);
+      const saber = usesSaber(id);
+      // A held power under way (lightning, fire): keep holding while there's someone in front, and it lasts.
+      const held = HEROES[id].powers.find((p) => p.hold);
+      if (held && pl.zapUntil > now) {
+        const range = held.id === 'flame' ? POWERS.flame.range : POWERS.lightning.range;
+        c.hold(held.key, d < range && facing);
+        if (saber) {
+          c.button(0, false);
+          c.button(2, false);
+        }
         return;
       }
-      if (lightning) c.hold('KeyQ', false);
-      // Shot at while closing in: the guard up (it holds while the meter does), down again to strike.
-      if (!inReach && hurtLately && d > 4 && m.g > 0 && m.m > GUARD.meter * 0.25 && now > pl.guardAgain) {
-        pl.guardUntil = now + 1 + Math.random() * 1.2 * (0.5 + mind.skill);
-        pl.guardAgain = pl.guardUntil + 0.3 + Math.random() * 0.6 * (1 - mind.skill);
+      if (held) c.hold(held.key, false);
+      // A saber: shot at while closing in, the guard up (it holds while the meter does), down again
+      // to strike. (A hero with a blaster just shoots: the shooter bots' way.)
+      if (saber) {
+        if (!inReach && hurtLately && d > 4 && m.g > 0 && m.m > GUARD.meter * 0.25 && now > pl.guardAgain) {
+          pl.guardUntil = now + 1 + Math.random() * 1.2 * (0.5 + mind.skill);
+          pl.guardAgain = pl.guardUntil + 0.3 + Math.random() * 0.6 * (1 - mind.skill);
+        }
+        const guard = pl.guardUntil > now && m.g > 0 && m.m > GUARD.meter * 0.12 && d > 3.5;
+        c.button(2, guard);
+        c.button(0, inReach && !guard && (s?.stagger ?? 0) === 0);
       }
-      const guard = pl.guardUntil > now && m.g > 0 && m.m > GUARD.meter * 0.12 && d > 3.5;
-      c.button(2, guard);
-      c.button(0, inReach && !guard && (s?.stagger ?? 0) === 0);
       // A power, now and then (more often the better the bot), when one's ready and worth it.
       if (now < pl.nextPower || rules.powers.held(bot)) return;
       pl.nextPower = now + 0.25 + (1 - mind.skill) * 0.6 + Math.random() * 0.4;
@@ -154,6 +175,8 @@ export function heroBots(game: GameContext, rules: HeroBotRules) {
       for (const p of ready.sort(() => Math.random() - 0.5)) {
         if (!worth(bot, p.id, target, d, hurtLately)) continue;
         if (p.id === 'leap') c.look(bot.yaw, Math.min(0.5, bot.pitch + 0.25));
+        // Up on the jetpack: climb a moment, then hover and shoot down.
+        if (p.id === 'jetpack') pl.climbUntil = now + 0.6 + Math.random() * 0.6;
         if (p.hold) {
           pl.zapUntil = now + 1.2 + Math.random() * 1.6;
           c.hold(p.key, true);
@@ -183,6 +206,8 @@ export function heroBots(game: GameContext, rules: HeroBotRules) {
     after(brains: ShooterBots) {
       const now = game.clock.now;
       for (const bot of game.bots.all) {
+        // Climbing on the jetpack (the shooter bots let go of Space by now).
+        if (plan(bot).climbUntil > now) bot.controls.hold('Space', true);
         if (!fallingBack(bot)) continue;
         const mind = brains.mind(bot);
         const m = bot.abilities[HERO_ABILITY] as HeroMove;
@@ -215,7 +240,9 @@ export function heroBots(game: GameContext, rules: HeroBotRules) {
         if (pl.zapUntil === 0 || pl.zapUntil > now) continue;
         pl.zapUntil = 0;
         const bot = game.bots.all.find((b) => b.id === id);
-        bot?.controls.hold('KeyQ', false);
+        const hero = bot && rules.heroOf(bot);
+        const key = hero && HEROES[hero].powers.find((p) => p.hold)?.key;
+        if (bot && key) bot.controls.hold(key, false);
       }
     },
     forget(bot: Player) {

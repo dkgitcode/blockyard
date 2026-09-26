@@ -1,6 +1,6 @@
 import { HeldModels, type GunHold, type ItemLook, type ItemPoses } from '@platform';
 import type { Client } from '@platform/client';
-import { HERO_IDS, HEROES, saberOf } from '../heroes/defs';
+import { HEROES, SABER_HEROES, saberOf } from '../heroes/defs';
 import { WEAPON_MODELS } from '../models';
 import { TEAMS } from '../teams';
 
@@ -66,7 +66,7 @@ export const LOOKS: Record<string, ItemLook> = {
     sounds: { use: 'blaster_pistol', reload: 'vent', empty: 'overheat' },
   },
   ...Object.fromEntries(
-    HERO_IDS.map((id) => [
+    SABER_HEROES.map((id) => [
       saberOf(id),
       {
         icon: { gltf: url(saberOf(id)) },

@@ -1,6 +1,6 @@
 import type { Client, ClientKit } from '@platform/client';
 import { HERO_ABILITY, activeOf, coolOf, type HeroMove } from '../abilities';
-import { HEROES, heroByNumber, type HeroId, type PowerId } from '../defs';
+import { HEROES, heroByNumber, usesSaber, type HeroId, type PowerId } from '../defs';
 import { GUARD } from '../tuning';
 import type { HeroScene } from './state';
 
@@ -17,6 +17,12 @@ const GLYPH: Record<PowerId, string> = {
   lightning: 'ϟ',
   chain: '⌁',
   aura: '◉',
+  scatter: '⋔',
+  charge: '⏵',
+  roar: '✺',
+  rocket: '➹',
+  flame: '♨',
+  jetpack: '⇡',
 };
 
 const CSS = `
@@ -35,6 +41,7 @@ body.bfh-on .hotbar, body.bfh-on .healthbar { visibility: hidden; }
 .bfh-hp.low > i { background: linear-gradient(180deg, #fff 0%, #ff3b30 40%, #7a0d08 100%); box-shadow: 0 0 14px #ff3b30; animation: bfh-pulse 0.6s ease-in-out infinite; }
 .bfh-hp > b { position: absolute; left: 0; top: 0; bottom: 0; width: calc(var(--lost, 1) * 100%); background: rgba(255, 255, 255, 0.55); transition: width 0.6s ease-out 0.25s; }
 .bfh-guard-row { display: flex; align-items: center; gap: 8px; }
+.bfh-hero.gun .bfh-guard-row { display: none; }
 .bfh-guard-l { font: 700 10px var(--pixel); letter-spacing: 0.14em; opacity: 0.8; min-width: 50px; text-shadow: 0 1px 0 #000; }
 .bfh-guard { flex: 1; height: 7px; }
 .bfh-guard > i { background: linear-gradient(90deg, #9fd8ff, #e9f6ff); box-shadow: 0 0 8px #9fd8ff; }
@@ -148,6 +155,8 @@ export function heroHud(scene: HeroScene): ClientKit {
       }
       if (id !== hero) become(id);
       const h = HEROES[id];
+      // A hero with a blaster has no guard to show.
+      cls(el!, 'gun', !usesSaber(id));
       // Health: the bar, and what was lost fading after it (its own, slower transition).
       const fill = Math.max(0, Math.min(1, me.health / (me.maxHealth || h.health)));
       set(hpBar, '--fill', fill.toFixed(3));

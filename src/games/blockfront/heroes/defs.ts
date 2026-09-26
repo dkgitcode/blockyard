@@ -6,10 +6,13 @@ import type { Team } from '../teams';
  * `saber.ts`, `powers.ts`; the numbers in `tuning.ts`); how they look is the screens' (`client/`).
  */
 
-export type HeroId = 'luke' | 'ben' | 'vader' | 'emperor';
+export type HeroId = 'luke' | 'ben' | 'chewie' | 'vader' | 'emperor' | 'boba';
 
-/** What a power does (`powers.ts`; Saber Rush and Force Leap are movement abilities: `abilities.ts`). */
-export type PowerId = 'push' | 'rush' | 'leap' | 'pull' | 'soresu' | 'throw' | 'choke' | 'rage' | 'lightning' | 'chain' | 'aura';
+/**
+ * What a power does (`powers.ts`; Saber Rush, Force Leap, the Wookiee Charge and the jetpack are
+ * movement abilities: `abilities.ts`).
+ */
+export type PowerId = 'push' | 'rush' | 'leap' | 'pull' | 'soresu' | 'throw' | 'choke' | 'rage' | 'lightning' | 'chain' | 'aura' | 'scatter' | 'charge' | 'roar' | 'rocket' | 'flame' | 'jetpack';
 
 export interface PowerInfo {
   id: PowerId;
@@ -33,8 +36,10 @@ export interface HeroInfo {
   title: string;
   team: Team;
   health: number;
-  /** Their saber's colour (the blade, its glow, the HUD). */
+  /** Their colour: a saber's (the blade, its glow), or the HUD's accent for a hero with a gun. */
   blade: string;
+  /** What they fight with: their saber (`saber_<id>`), or a blaster of their own (`guns.ts`). */
+  weapon: string;
   /** Battle points it costs to play them. */
   cost: number;
   powers: [PowerInfo, PowerInfo, PowerInfo];
@@ -48,6 +53,7 @@ export const HEROES: Record<HeroId, HeroInfo> = {
     team: 0,
     health: 650,
     blade: '#5dff6a',
+    weapon: 'saber_luke',
     cost: 1200,
     powers: [
       { id: 'push', key: 'KeyQ', name: 'Force Push', cooldown: 8, blurb: 'Throws back everyone in front of him' },
@@ -62,11 +68,27 @@ export const HEROES: Record<HeroId, HeroInfo> = {
     team: 0,
     health: 600,
     blade: '#4db8ff',
+    weapon: 'saber_ben',
     cost: 1200,
     powers: [
       { id: 'push', key: 'KeyQ', name: 'Force Push', cooldown: 8, blurb: 'Throws back everyone in front of him' },
       { id: 'pull', key: 'KeyE', name: 'Force Pull', cooldown: 11, blurb: 'Drags an enemy to his blade, stunned' },
       { id: 'soresu', key: 'KeyF', name: 'Soresu Stance', cooldown: 18, lasts: 5, blurb: 'Deflects everything, from every side, for a while' },
+    ],
+  },
+  chewie: {
+    id: 'chewie',
+    name: 'Chewblocca',
+    title: 'Wookiee Warrior',
+    team: 0,
+    health: 850,
+    blade: '#e8a24a',
+    weapon: 'hero_bowcaster',
+    cost: 1200,
+    powers: [
+      { id: 'scatter', key: 'KeyQ', name: 'Scatter Shot', cooldown: 9, blurb: 'Five quarrels at once, in a fan' },
+      { id: 'charge', key: 'KeyE', name: 'Wookiee Charge', cooldown: 10, blurb: 'A bull rush that flattens everyone in the way' },
+      { id: 'roar', key: 'KeyF', name: 'Enraged', cooldown: 18, lasts: 6, blurb: 'A roar that staggers all near; tougher, and mending fast' },
     ],
   },
   vader: {
@@ -76,6 +98,7 @@ export const HEROES: Record<HeroId, HeroInfo> = {
     team: 1,
     health: 800,
     blade: '#ff2a2a',
+    weapon: 'saber_vader',
     cost: 1200,
     powers: [
       { id: 'throw', key: 'KeyQ', name: 'Saber Throw', cooldown: 9, blurb: 'Hurls his saber out and back through the ranks' },
@@ -90,6 +113,7 @@ export const HEROES: Record<HeroId, HeroInfo> = {
     team: 1,
     health: 600,
     blade: '#ff3355',
+    weapon: 'saber_emperor',
     cost: 1200,
     powers: [
       { id: 'lightning', key: 'KeyQ', name: 'Force Lightning', cooldown: 6, lasts: 3, hold: true, blurb: 'Lightning from both hands, for as long as he holds it' },
@@ -97,9 +121,31 @@ export const HEROES: Record<HeroId, HeroInfo> = {
       { id: 'aura', key: 'KeyF', name: 'Dark Aura', cooldown: 18, lasts: 6, blurb: 'Drains everyone close by, healing him' },
     ],
   },
+  boba: {
+    id: 'boba',
+    name: 'Boba Fetch',
+    title: 'Bounty Hunter',
+    team: 1,
+    health: 650,
+    blade: '#7fd08a',
+    weapon: 'hero_ee3',
+    cost: 1200,
+    powers: [
+      { id: 'rocket', key: 'KeyQ', name: 'Wrist Rocket', cooldown: 8, blurb: 'A rocket that seeks whoever is under the crosshair' },
+      { id: 'flame', key: 'KeyE', name: 'Flamethrower', cooldown: 8, lasts: 3, hold: true, blurb: 'A cone of fire, for as long as he holds it; the ground burns' },
+      { id: 'jetpack', key: 'KeyF', name: 'Jetpack', cooldown: 13, lasts: 4.5, blurb: 'Up and away: hover, strafe and shoot from the air (Space climbs)' },
+    ],
+  },
 };
 
 export const HERO_IDS = Object.keys(HEROES) as HeroId[];
+
+/** The heroes who fight with a saber (the rest carry a blaster of their own). */
+export const SABER_HEROES = HERO_IDS.filter((id) => HEROES[id].weapon === `saber_${id}`);
+export const usesSaber = (id: HeroId | null) => !!id && HEROES[id].weapon === `saber_${id}`;
+
+/** The hero whose weapon an item is (their saber or their blaster), if it's one. */
+export const heroOfWeapon = (item: string | null | undefined): HeroId | null => (item ? (HERO_IDS.find((id) => HEROES[id].weapon === item) ?? null) : null);
 
 /** The item each hero's saber is (`saber_<id>`). */
 export const saberOf = (id: HeroId) => `saber_${id}`;

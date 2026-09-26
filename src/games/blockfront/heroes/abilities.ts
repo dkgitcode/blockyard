@@ -1,5 +1,5 @@
 import type { MovementAbility } from '@platform';
-import { HEROES, heroByNumber } from './defs';
+import { HEROES, heroByNumber, usesSaber } from './defs';
 import { MOVE, POWERS } from './tuning';
 
 /**
@@ -12,6 +12,9 @@ import { MOVE, POWERS } from './tuning';
  * - each swing of the saber steps them forward (a lunge);
  * - Luke's Saber Rush (E: a dash through everyone in the way; the server cuts them) and Force Leap
  *   (F: a great jump where he looks; the server's shockwave where he lands);
+ * - Chewblocca's Wookiee Charge (E: a bull rush along the ground; the server flattens who it meets);
+ * - Boba Fetch's jetpack (F: up, then hovering and strafing for a few seconds; Space climbs,
+ *   crouching drops; he fires as he flies);
  * - every power's cooldown and how long one that lasts has left, counting down: the server sets
  *   them as powers are used, the hero HUD shows them (`client.me.abilities.hero`).
  *
@@ -44,9 +47,12 @@ export interface HeroMove {
   l: number;
   /** Seconds before the next lunge. */
   u: number;
+  /** The jetpack: seconds of fuel left while it's lit (0: not flying), and seconds since it lit. */
+  f: number;
+  ft: number;
 }
 
-export const HERO_MOVE: HeroMove = { h: 0, c0: 0, c1: 0, c2: 0, a0: 0, a1: 0, a2: 0, g: 0, k: 0, m: 100, j: 0, r: 0, rx: 0, rz: -1, l: 0, u: 0 };
+export const HERO_MOVE: HeroMove = { h: 0, c0: 0, c1: 0, c2: 0, a0: 0, a1: 0, a2: 0, g: 0, k: 0, m: 100, j: 0, r: 0, rx: 0, rz: -1, l: 0, u: 0, f: 0, ft: 0 };
 
 /** The ability's name in `movement.abilities` (and `player.abilities`). */
 export const HERO_ABILITY = 'hero';
@@ -67,14 +73,14 @@ const hero: MovementAbility<HeroMove> = {
     s.u = Math.max(0, s.u - dt);
     const id = heroByNumber(s.h);
     if (!id) {
-      s.r = s.l = s.j = 0;
+      s.r = s.l = s.j = s.f = 0;
       return;
     }
     const guard = s.g > 0 && c.button(2);
     // The guard up: slower, and slower still at a run.
     if (guard) body.speed *= body.sprinting ? MOVE.blockSprint : MOVE.block;
-    // Each swing steps them in (on the ground, not guarding, not mid-dash).
-    if (c.buttonPressed(0) && s.k > 0 && !guard && s.u === 0 && body.onGround && s.r === 0) {
+    // Each swing of a saber steps them in (on the ground, not guarding, not mid-dash).
+    if (usesSaber(id) && c.buttonPressed(0) && s.k > 0 && !guard && s.u === 0 && body.onGround && s.r === 0) {
       s.u = MOVE.lungeEvery;
       body.addVelocity({ x: -Math.sin(body.yaw) * MOVE.lunge, z: -Math.cos(body.yaw) * MOVE.lunge });
     }
@@ -99,12 +105,55 @@ const hero: MovementAbility<HeroMove> = {
       }
     }
 
+    // Chewblocca's Wookiee Charge (E): a bull rush along the ground.
+    if (id === 'chewie' && s.k > 0) {
+      const charge = HEROES.chewie.powers[1];
+      if (c.pressed(charge.key) && s.c1 === 0 && s.r === 0) {
+        s.rx = -Math.sin(body.yaw);
+        s.rz = -Math.cos(body.yaw);
+        s.r = POWERS.charge.time;
+        s.c1 = charge.cooldown;
+        body.trigger('charge');
+      }
+    }
+    // Boba Fetch's jetpack (F): up, then hovering and strafing on its fuel.
+    if (id === 'boba' && s.k > 0) {
+      const jet = HEROES.boba.powers[2];
+      if (c.pressed(jet.key) && s.c2 === 0 && s.f === 0 && !body.inWater) {
+        s.f = jet.lasts ?? 4;
+        s.ft = 0;
+        s.c2 = jet.cooldown;
+        body.setVelocity({ y: POWERS.jetpack.lift });
+        body.trigger('jet');
+      }
+    }
+    if (s.f > 0) {
+      const J = POWERS.jetpack;
+      s.f = Math.max(0, s.f - dt);
+      s.ft += dt;
+      s.a2 = s.f;
+      const vy = body.velocity.y;
+      // Space climbs, crouching drops, else it hovers (the climb eased off).
+      const want = c.isDown('Space') ? J.climb : body.crouching ? J.drop : J.hover;
+      if (s.ft > 0.25) body.setVelocity({ y: vy + (want - vy) * Math.min(1, dt * 5) });
+      body.gravity = J.gravity;
+      body.control = J.control;
+      body.speed *= J.speed;
+      body.jump = false;
+      // Back on the ground (not just leaving it), or out of fuel: it cuts out.
+      if (s.f === 0 || (body.onGround && s.ft > 0.4 && !c.isDown('Space'))) {
+        s.f = 0;
+        s.a2 = 0;
+        body.trigger('jetEnd');
+      }
+    }
+
     // On the ground: the jumps come back, and a leap lands (the server's shockwave).
     if (body.onGround || body.inWater) {
       s.j = 0;
       if (s.l > 0.12) body.trigger('land');
       if (s.l > 0.12 || body.inWater) s.l = 0;
-    } else if (s.j < 1 && s.r === 0 && s.l === 0 && body.control !== 0 && c.pressed('Space')) {
+    } else if (s.j < 1 && s.r === 0 && s.l === 0 && s.f === 0 && body.control !== 0 && c.pressed('Space')) {
       // A second jump, in the air.
       s.j++;
       c.consume('Space');
@@ -112,13 +161,17 @@ const hero: MovementAbility<HeroMove> = {
       body.trigger('jump');
     }
 
-    // A rush under way: level and unsteerable, out of it at a run.
+    // A rush under way: level and unsteerable, out of it at a run. (A charge keeps to the ground.)
     if (s.r > 0) {
       s.r = Math.max(0, s.r - dt);
-      const R = POWERS.rush;
+      const charge = id === 'chewie';
+      const R = charge ? POWERS.charge : POWERS.rush;
       const speed = s.r > 0 ? R.speed : R.exit;
-      body.setVelocity({ x: s.rx * speed, y: 0, z: s.rz * speed });
-      body.gravity = 0;
+      if (charge) body.setVelocity({ x: s.rx * speed, z: s.rz * speed });
+      else {
+        body.setVelocity({ x: s.rx * speed, y: 0, z: s.rz * speed });
+        body.gravity = 0;
+      }
       body.control = 0;
       body.jump = false;
     }
